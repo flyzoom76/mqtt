@@ -156,41 +156,61 @@ class MQTTViewer(QMainWindow):
 
     def _make_filter_panel(self):
         box = QGroupBox("Filter")
-        row = QHBoxLayout(box)
+        outer = QVBoxLayout(box)
+        outer.setSpacing(4)
 
-        row.addWidget(QLabel("SboId:"))
+        # Zeile 1: SboId + Health-Filter + Leeren
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("SboId:"))
         self.inp_sboid = QLineEdit()
-        self.inp_sboid.setPlaceholderText("z.B. 12345  (im Topic)")
-        self.inp_sboid.setFixedWidth(180)
+        self.inp_sboid.setPlaceholderText("z.B. 100648")
+        self.inp_sboid.setFixedWidth(120)
         self.inp_sboid.setToolTip(
             "Filtert Meldungen, deren Topic diese SboId enthält.\n"
             "Leer lassen = alle Topics zeigen."
         )
-        row.addWidget(self.inp_sboid)
+        row1.addWidget(self.inp_sboid)
 
-        self.chk_health = QCheckBox("Nur Fehler anzeigen\n(HEALTH_OK ausblenden)")
+        self.chk_health = QCheckBox("Nur Fehler (HEALTH_OK ausblenden)")
         self.chk_health.setChecked(True)
-        row.addWidget(self.chk_health)
+        row1.addWidget(self.chk_health)
 
         btn_clear = QPushButton("Leeren")
-        btn_clear.setFixedWidth(80)
+        btn_clear.setFixedWidth(75)
         btn_clear.clicked.connect(self._clear_table)
-        row.addWidget(btn_clear)
+        row1.addWidget(btn_clear)
+        outer.addLayout(row1)
+
+        # Zeile 2: Gerätetyp-Checkboxen
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Gerätetyp:"))
+        self.chk_dcu = QCheckBox("dcu")
+        self.chk_dcu.setChecked(True)
+        self.chk_du = QCheckBox("du")
+        self.chk_du.setChecked(True)
+        self.chk_pau = QCheckBox("pau")
+        self.chk_pau.setChecked(True)
+        self.chk_other = QCheckBox("andere")
+        self.chk_other.setChecked(False)
+        for chk in (self.chk_dcu, self.chk_du, self.chk_pau, self.chk_other):
+            row2.addWidget(chk)
+        row2.addStretch()
+        outer.addLayout(row2)
 
         return box
 
     def _make_table(self):
         self.table = QTableWidget()
-        self.table.setColumnCount(10)
+        self.table.setColumnCount(11)
         self.table.setHorizontalHeaderLabels([
-            "Zeitstempel", "Topic", "Beschreibung",
+            "Zeitstempel", "Typ", "Topic", "Beschreibung",
             "Health", "Erreichbarkeit", "Aktivierung",
             "Grund", "CPU %", "RAM %", "Disk %",
         ])
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(1, QHeaderView.Stretch)
         hh.setSectionResizeMode(2, QHeaderView.Stretch)
+        hh.setSectionResizeMode(3, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
@@ -237,6 +257,15 @@ class MQTTViewer(QMainWindow):
             self.btn_connect.setText("Verbinden")
             self.statusBar().showMessage(f"✗  {message}")
 
+    @staticmethod
+    def _device_type_from_topic(topic: str) -> str:
+        """Extrahiert den Gerätetyp (dcu/du/pau) aus dem Topic-Pfad."""
+        known = {"dcu", "du", "pau"}
+        for segment in topic.split("/"):
+            if segment in known:
+                return segment
+        return ""
+
     def handle_message(self, topic: str, payload: str):
         self._total += 1
 
@@ -245,6 +274,25 @@ class MQTTViewer(QMainWindow):
         if sboid and sboid not in topic:
             self._update_status()
             return
+
+        # Gerätetyp-Filter
+        device_type = self._device_type_from_topic(topic)
+        allowed = set()
+        if self.chk_dcu.isChecked():
+            allowed.add("dcu")
+        if self.chk_du.isChecked():
+            allowed.add("du")
+        if self.chk_pau.isChecked():
+            allowed.add("pau")
+        if device_type in {"dcu", "du", "pau"}:
+            if device_type not in allowed:
+                self._update_status()
+                return
+        else:
+            # unbekannter Typ: nur anzeigen wenn "andere" aktiviert
+            if not self.chk_other.isChecked():
+                self._update_status()
+                return
 
         # JSON parsen
         try:
@@ -260,10 +308,10 @@ class MQTTViewer(QMainWindow):
             return
 
         self._shown += 1
-        self._add_row(topic, data, payload)
+        self._add_row(topic, device_type, data, payload)
         self._update_status()
 
-    def _add_row(self, topic: str, data: dict, raw: str):
+    def _add_row(self, topic: str, device_type: str, data: dict, raw: str):
         self.table.setSortingEnabled(False)
 
         row = self.table.rowCount()
@@ -275,6 +323,7 @@ class MQTTViewer(QMainWindow):
 
         cells = [
             header.get("timestamp", ""),
+            device_type,
             topic,
             data.get("description", ""),
             health,
