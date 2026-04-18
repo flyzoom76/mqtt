@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QSpinBox, QMessageBox, QAbstractItemView, QTabWidget, QComboBox,
     QFileDialog
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QTimer
 from PyQt5.QtGui import QColor, QFont, QIcon, QPixmap, QPainter
 import paho.mqtt.client as mqtt
 
@@ -510,6 +510,10 @@ class MQTTViewer(QMainWindow):
         self._shown = 0
         self._is_connected = False
         self.device_status = {}
+        self._countdown_secs = 0
+        self._timer = QTimer()
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._tick)
         self._setup_ui()
         self._load_settings()
 
@@ -524,6 +528,7 @@ class MQTTViewer(QMainWindow):
         main_layout.setSpacing(6)
 
         main_layout.addWidget(self._make_connection_panel())
+        main_layout.addWidget(self._make_countdown_bar())
 
         self.tabs = QTabWidget()
         self.meldungen_tab = MeldungenTab()
@@ -533,6 +538,48 @@ class MQTTViewer(QMainWindow):
         main_layout.addWidget(self.tabs, stretch=1)
 
         self.statusBar().showMessage("Nicht verbunden")
+
+    def _make_countdown_bar(self) -> QWidget:
+        bar = QWidget()
+        bar.setFixedHeight(36)
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(8, 4, 8, 4)
+
+        self.lbl_countdown = QLabel("Nicht verbunden")
+        self.lbl_countdown.setAlignment(Qt.AlignCenter)
+        self.lbl_countdown.setFont(QFont("Arial", 11, QFont.Bold))
+        self.lbl_countdown.setStyleSheet(
+            "color: #555; background: transparent;"
+        )
+        layout.addWidget(self.lbl_countdown)
+        return bar
+
+    def _start_countdown(self):
+        self._countdown_secs = 5 * 60
+        self._timer.start()
+        self._tick()
+
+    def _stop_countdown(self):
+        self._timer.stop()
+        self.lbl_countdown.setText("Nicht verbunden")
+        self.lbl_countdown.setStyleSheet("color: #555; background: transparent;")
+
+    def _tick(self):
+        if self._countdown_secs > 0:
+            m, s = divmod(self._countdown_secs, 60)
+            self.lbl_countdown.setText(
+                f"⏱  Noch {m}:{s:02d} min bis alle Anlagen gemeldet haben"
+            )
+            self.lbl_countdown.setStyleSheet(
+                "color: #b45309; background: #fef9c3; border-radius: 6px; padding: 2px 12px;"
+            )
+            self._countdown_secs -= 1
+        else:
+            self._timer.stop()
+            self.lbl_countdown.setText("✓  Alle Anlagen sollten sich gemeldet haben")
+            self.lbl_countdown.setStyleSheet(
+                "color: #166534; background: #dcfce7; border-radius: 6px; padding: 2px 12px;"
+            )
 
     def _make_connection_panel(self):
         box = QGroupBox("Broker-Verbindung")
@@ -607,9 +654,11 @@ class MQTTViewer(QMainWindow):
         if connected:
             self.btn_connect.setText("Trennen")
             self.statusBar().showMessage(f"✓  {message}  |  Empfangen: 0  |  Angezeigt: 0")
+            self._start_countdown()
         else:
             self.btn_connect.setText("Verbinden")
             self.statusBar().showMessage(f"✗  {message}")
+            self._stop_countdown()
 
     @staticmethod
     def _device_type_from_topic(topic: str) -> str:
