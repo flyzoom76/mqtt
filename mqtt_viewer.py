@@ -3,6 +3,7 @@
 
 import sys
 import json
+import os
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGroupBox, QLabel, QLineEdit, QPushButton, QTableWidget,
@@ -10,24 +11,35 @@ from PyQt5.QtWidgets import (
     QSpinBox, QMessageBox, QAbstractItemView, QTabWidget, QComboBox,
     QFileDialog
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect
-from PyQt5.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QBrush
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QSettings
+from PyQt5.QtGui import QColor, QFont, QIcon, QPixmap, QPainter
 import paho.mqtt.client as mqtt
 
 
 def create_vbz_icon() -> QIcon:
-    """Erstellt das VBZ-Logo als Icon (blau, weisser Text)."""
     size = 64
     px = QPixmap(size, size)
     px.fill(QColor("#1888b8"))
     p = QPainter(px)
     p.setPen(Qt.white)
-    font = QFont("Arial", 22, QFont.Bold)
-    p.setFont(font)
+    p.setFont(QFont("Arial", 22, QFont.Bold))
     p.drawText(QRect(0, 0, size, size), Qt.AlignCenter, "VBZ")
     p.end()
     return QIcon(px)
 
+
+def make_lamp(status: str) -> QLabel:
+    label = QLabel("●")
+    label.setAlignment(Qt.AlignCenter)
+    label.setFont(QFont("Arial", 16))
+    color = {"ok": "#22c55e", "error": "#f97316", "offline": "#ef4444"}.get(status, "#ef4444")
+    label.setStyleSheet(f"color: {color};")
+    tooltip = {"ok": "HEALTH_OK", "error": "Health-Fehler", "offline": "Keine Meldung"}.get(status, "")
+    label.setToolTip(tooltip)
+    return label
+
+
+# ---------------------------------------------------------------------------
 
 class MQTTWorker(QThread):
     message_received = pyqtSignal(str, str)
@@ -41,22 +53,18 @@ class MQTTWorker(QThread):
         self._topic = topic
         self._host = host
         self._port = port
-
         if self.client:
             try:
                 self.client.loop_stop()
                 self.client.disconnect()
             except Exception:
                 pass
-
         self.client = mqtt.Client()
         if username:
             self.client.username_pw_set(username, password)
-
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
         self.client.on_message = self._on_message
-
         try:
             self.client.connect(host, port, keepalive=60)
             self.client.loop_start()
@@ -76,18 +84,12 @@ class MQTTWorker(QThread):
             client.subscribe(self._topic)
             self.connection_changed.emit(True, f"Verbunden mit {self._host}:{self._port}, Topic: {self._topic}")
         else:
-            codes = {
-                1: "Ungültige Protokollversion",
-                2: "Ungültige Client-ID",
-                3: "Broker nicht verfügbar",
-                4: "Falscher Benutzername/Passwort",
-                5: "Nicht autorisiert",
-            }
+            codes = {1: "Ungültige Protokollversion", 2: "Ungültige Client-ID",
+                     3: "Broker nicht verfügbar", 4: "Falscher Benutzername/Passwort", 5: "Nicht autorisiert"}
             self.connection_changed.emit(False, f"Fehler: {codes.get(rc, f'RC={rc}')}")
 
     def _on_disconnect(self, client, userdata, rc):
-        msg = "Verbindung getrennt" if rc == 0 else f"Verbindung verloren (RC={rc})"
-        self.connection_changed.emit(False, msg)
+        self.connection_changed.emit(False, "Verbindung getrennt" if rc == 0 else f"Verbindung verloren (RC={rc})")
 
     def _on_message(self, client, userdata, msg):
         try:
@@ -99,24 +101,23 @@ class MQTTWorker(QThread):
 
 # ---------------------------------------------------------------------------
 
-def make_lamp(status: str) -> QLabel:
-    """Erstellt eine farbige Statuslampe (●)."""
-    label = QLabel("●")
-    label.setAlignment(Qt.AlignCenter)
-    label.setFont(QFont("Arial", 16))
-    color = {"ok": "#22c55e", "error": "#f97316", "offline": "#ef4444"}.get(status, "#ef4444")
-    label.setStyleSheet(f"color: {color};")
-    tooltip = {"ok": "HEALTH_OK", "error": "Health-Fehler", "offline": "Keine Meldung"}.get(status, "")
-    label.setToolTip(tooltip)
-    return label
-
-
 class AnlagenTab(QWidget):
-    def __init__(self, device_status: dict):
+    def __init__(self, device_status: dict, settings: QSettings):
         super().__init__()
         self.device_status = device_status
+        self.settings = settings
         self.anlagen = []
+
+        # Deaktivierte Anlagen aus Einstellungen laden
+        raw = self.settings.value("disabled_devices", "")
+        self.disabled_devices: set = set(raw.split(",")) if raw else set()
+
         self._setup_ui()
+
+        # Gespeicherte Excel-Datei automatisch laden
+        saved_path = self.settings.value("excel_path", "")
+        if saved_path and os.path.exists(saved_path):
+            self._load_excel(saved_path)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -145,11 +146,11 @@ class AnlagenTab(QWidget):
         layout.addLayout(toolbar)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Status", "MVU", "Tech Nr", "Haltestelle"])
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Status", "Aktiv", "MVU", "Tech Nr", "Haltestelle"])
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(3, QHeaderView.Stretch)
+        hh.setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -162,17 +163,19 @@ class AnlagenTab(QWidget):
         )
         if not path:
             return
+        self._load_excel(path)
+        self.settings.setValue("excel_path", path)
+
+    def _load_excel(self, path: str):
         try:
             import openpyxl
         except ImportError:
             QMessageBox.critical(self, "Fehler", "Bitte 'openpyxl' installieren:\n  pip install openpyxl")
             return
-
         try:
             wb = openpyxl.load_workbook(path, data_only=True)
             ws = wb.active
 
-            # Header-Zeile suchen
             col_mvu = col_tech = col_halt = None
             header_row = 0
             for i, row in enumerate(ws.iter_rows(values_only=True)):
@@ -183,8 +186,6 @@ class AnlagenTab(QWidget):
                     col_halt = next((j for j, c in enumerate(cells) if "halt" in c), None)
                     header_row = i + 1
                     break
-
-            # Fallback: erste drei Spalten
             if col_mvu is None:
                 col_mvu, col_tech, col_halt = 0, 1, 2
                 header_row = 1
@@ -194,18 +195,15 @@ class AnlagenTab(QWidget):
                 def cell(idx):
                     return row[idx] if idx is not None and idx < len(row) else None
 
-                mvu_val   = cell(col_mvu)
-                tech_val  = cell(col_tech)
-                halt_val  = cell(col_halt)
+                mvu_val  = cell(col_mvu)
+                tech_val = cell(col_tech)
+                halt_val = cell(col_halt)
 
-                # Zeilen ohne Tech Nr überspringen
                 if tech_val is None:
                     continue
-                tech_str = str(tech_val).strip().split(".")[0]  # "42190.0" → "42190"
+                tech_str = str(tech_val).strip().split(".")[0]
                 if not tech_str.isdigit():
                     continue
-
-                # Summenzeilen überspringen (MVU enthält "TOTAL")
                 mvu_str = str(mvu_val).strip() if mvu_val else ""
                 if "total" in mvu_str.lower():
                     continue
@@ -216,7 +214,6 @@ class AnlagenTab(QWidget):
                     "haltestelle": str(halt_val).strip() if halt_val else "",
                 })
 
-            # MVU-Filter befüllen
             mvus = sorted(set(a["mvu"] for a in self.anlagen if a["mvu"]))
             self.combo_mvu.blockSignals(True)
             self.combo_mvu.clear()
@@ -225,7 +222,6 @@ class AnlagenTab(QWidget):
                 self.combo_mvu.addItem(mvu)
             self.combo_mvu.blockSignals(False)
 
-            import os
             self.lbl_file.setText(os.path.basename(path))
             self.lbl_file.setStyleSheet("color: black;")
             self.refresh_table()
@@ -233,12 +229,47 @@ class AnlagenTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Excel konnte nicht gelesen werden:\n{e}")
 
+    def _make_active_checkbox(self, tech_nr: str) -> QWidget:
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setAlignment(Qt.AlignCenter)
+        chk = QCheckBox()
+        chk.setChecked(tech_nr not in self.disabled_devices)
+        chk.stateChanged.connect(lambda state, t=tech_nr: self._on_active_changed(t, state))
+        layout.addWidget(chk)
+        return container
+
+    def _on_active_changed(self, tech_nr: str, state: int):
+        if state == Qt.Checked:
+            self.disabled_devices.discard(tech_nr)
+        else:
+            self.disabled_devices.add(tech_nr)
+        # Einstellungen speichern
+        self.settings.setValue("disabled_devices", ",".join(self.disabled_devices))
+        # Zeile sofort durchstreichen/wiederherstellen
+        self._apply_strikethrough()
+
+    def _apply_strikethrough(self):
+        """Durchstreichen aller deaktivierten Zeilen ohne Tabelle neu aufzubauen."""
+        for row in range(self.table.rowCount()):
+            tech_item = self.table.item(row, 3)  # Tech Nr Spalte
+            if not tech_item:
+                continue
+            tech_nr = tech_item.text()
+            disabled = tech_nr in self.disabled_devices
+            font = QFont()
+            font.setStrikeOut(disabled)
+            color = QColor(180, 180, 180) if disabled else QColor(0, 0, 0)
+            for col in range(self.table.columnCount()):
+                item = self.table.item(row, col)
+                if item:
+                    item.setFont(font)
+                    item.setForeground(color)
+
     def refresh_table(self):
         selected = self.combo_mvu.currentText()
-        filtered = [
-            a for a in self.anlagen
-            if selected == "Alle" or a["mvu"] == selected
-        ]
+        filtered = [a for a in self.anlagen if selected == "Alle" or a["mvu"] == selected]
 
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
@@ -248,11 +279,18 @@ class AnlagenTab(QWidget):
 
             status = self.device_status.get(anlage["tech_nr"], "offline")
             self.table.setCellWidget(row, 0, make_lamp(status))
+            self.table.setCellWidget(row, 1, self._make_active_checkbox(anlage["tech_nr"]))
 
-            for col, key in enumerate(["mvu", "tech_nr", "haltestelle"], start=1):
+            disabled = anlage["tech_nr"] in self.disabled_devices
+            font = QFont()
+            font.setStrikeOut(disabled)
+            color = QColor(180, 180, 180) if disabled else QColor(0, 0, 0)
+
+            for col, key in enumerate(["mvu", "tech_nr", "haltestelle"], start=2):
                 item = QTableWidgetItem(anlage[key])
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-                # Tech Nr als Zahl sortierbar machen
+                item.setFont(font)
+                item.setForeground(color)
                 if key == "tech_nr":
                     item.setData(Qt.UserRole, int(anlage[key]))
                 self.table.setItem(row, col, item)
@@ -261,12 +299,8 @@ class AnlagenTab(QWidget):
         self.lbl_count.setText(f"{len(filtered)} Anlagen")
 
     def update_lamps(self):
-        """Aktualisiert nur die Statuslampen (ohne Tabelle neu aufzubauen)."""
         selected = self.combo_mvu.currentText()
-        filtered = [
-            a for a in self.anlagen
-            if selected == "Alle" or a["mvu"] == selected
-        ]
+        filtered = [a for a in self.anlagen if selected == "Alle" or a["mvu"] == selected]
         for row, anlage in enumerate(filtered):
             status = self.device_status.get(anlage["tech_nr"], "offline")
             self.table.setCellWidget(row, 0, make_lamp(status))
@@ -275,7 +309,6 @@ class AnlagenTab(QWidget):
 # ---------------------------------------------------------------------------
 
 class MeldungenTab(QWidget):
-    """Bestehender Meldungs-Tab (ausgelagert in eigenes Widget)."""
     def __init__(self):
         super().__init__()
         self._setup_ui()
@@ -284,7 +317,6 @@ class MeldungenTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
         layout.addWidget(self._make_filter_panel())
-
         splitter = QSplitter(Qt.Vertical)
         splitter.addWidget(self._make_table())
         splitter.addWidget(self._make_detail_panel())
@@ -301,16 +333,11 @@ class MeldungenTab(QWidget):
         self.inp_sboid = QLineEdit()
         self.inp_sboid.setPlaceholderText("z.B. 100648")
         self.inp_sboid.setFixedWidth(120)
-        self.inp_sboid.setToolTip(
-            "Filtert Meldungen, deren Topic diese SboId enthält.\n"
-            "Leer lassen = alle Topics zeigen."
-        )
+        self.inp_sboid.setToolTip("Filtert Meldungen, deren Topic diese SboId enthält.\nLeer lassen = alle Topics.")
         row1.addWidget(self.inp_sboid)
-
         self.chk_health = QCheckBox("Nur Fehler (HEALTH_OK ausblenden)")
         self.chk_health.setChecked(True)
         row1.addWidget(self.chk_health)
-
         btn_clear = QPushButton("Leeren")
         btn_clear.setFixedWidth(75)
         btn_clear.clicked.connect(self.clear_table)
@@ -327,7 +354,6 @@ class MeldungenTab(QWidget):
             row2.addWidget(chk)
         row2.addStretch()
         outer.addLayout(row2)
-
         return box
 
     def _make_table(self):
@@ -359,7 +385,6 @@ class MeldungenTab(QWidget):
         return box
 
     def _find_row(self, topic: str) -> int:
-        """Gibt die Zeile für dieses Topic zurück, oder -1 wenn nicht vorhanden."""
         for r in range(self.table.rowCount()):
             item = self.table.item(r, 0)
             if item and item.data(Qt.UserRole + 1) == topic:
@@ -368,7 +393,6 @@ class MeldungenTab(QWidget):
 
     def add_row(self, topic: str, device_type: str, data: dict, raw: str):
         self.table.setSortingEnabled(False)
-
         existing = self._find_row(topic)
         row = existing if existing >= 0 else self.table.rowCount()
         if existing < 0:
@@ -379,25 +403,18 @@ class MeldungenTab(QWidget):
         health = data.get("health", "")
 
         cells = [
-            header.get("timestamp", ""),
-            device_type,
-            topic,
-            data.get("description", ""),
-            health,
-            data.get("reachability", ""),
-            data.get("activation", ""),
+            header.get("timestamp", ""), device_type, topic,
+            data.get("description", ""), health,
+            data.get("reachability", ""), data.get("activation", ""),
             data.get("reason", ""),
-            str(usage.get("cpu", "")),
-            str(usage.get("ram", "")),
-            str(usage.get("disk", "")),
+            str(usage.get("cpu", "")), str(usage.get("ram", "")), str(usage.get("disk", "")),
         ]
-
         for col, val in enumerate(cells):
             item = QTableWidgetItem(val)
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             if col == 0:
-                item.setData(Qt.UserRole, raw)        # vollständiges JSON
-                item.setData(Qt.UserRole + 1, topic)  # Topic als Schlüssel
+                item.setData(Qt.UserRole,     raw)
+                item.setData(Qt.UserRole + 1, topic)
             self.table.setItem(row, col, item)
 
         if health in ("HEALTH_OK", ""):
@@ -437,14 +454,16 @@ class MeldungenTab(QWidget):
 class MQTTViewer(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.settings = QSettings("VBZ", "MQTTLive")
         self.worker = MQTTWorker()
         self.worker.message_received.connect(self.handle_message)
         self.worker.connection_changed.connect(self.handle_connection)
         self._total = 0
         self._shown = 0
         self._is_connected = False
-        self.device_status = {}  # tech_nr (str) -> "ok" | "error" | "offline"
+        self.device_status = {}
         self._setup_ui()
+        self._load_settings()
 
     def _setup_ui(self):
         self.setWindowTitle("VBZ MQTT Live")
@@ -460,7 +479,7 @@ class MQTTViewer(QMainWindow):
 
         self.tabs = QTabWidget()
         self.meldungen_tab = MeldungenTab()
-        self.anlagen_tab   = AnlagenTab(self.device_status)
+        self.anlagen_tab   = AnlagenTab(self.device_status, self.settings)
         self.tabs.addTab(self.meldungen_tab, "Meldungen")
         self.tabs.addTab(self.anlagen_tab,   "Anlagen")
         main_layout.addWidget(self.tabs, stretch=1)
@@ -472,14 +491,13 @@ class MQTTViewer(QMainWindow):
         row = QHBoxLayout(box)
 
         row.addWidget(QLabel("Host:"))
-        self.inp_host = QLineEdit("localhost")
+        self.inp_host = QLineEdit()
         self.inp_host.setFixedWidth(160)
         row.addWidget(self.inp_host)
 
         row.addWidget(QLabel("Port:"))
         self.inp_port = QSpinBox()
         self.inp_port.setRange(1, 65535)
-        self.inp_port.setValue(1883)
         self.inp_port.setFixedWidth(75)
         row.addWidget(self.inp_port)
 
@@ -495,7 +513,7 @@ class MQTTViewer(QMainWindow):
         row.addWidget(self.inp_pass)
 
         row.addWidget(QLabel("Topic:"))
-        self.inp_topic = QLineEdit("#")
+        self.inp_topic = QLineEdit()
         self.inp_topic.setFixedWidth(130)
         row.addWidget(self.inp_topic)
 
@@ -506,7 +524,17 @@ class MQTTViewer(QMainWindow):
 
         return box
 
-    # ------------------------------------------------------------------ logic
+    def _load_settings(self):
+        self.inp_host.setText(self.settings.value("host", "localhost"))
+        self.inp_port.setValue(int(self.settings.value("port", 1883)))
+        self.inp_user.setText(self.settings.value("username", ""))
+        self.inp_topic.setText(self.settings.value("topic", "#"))
+
+    def _save_settings(self):
+        self.settings.setValue("host",     self.inp_host.text().strip())
+        self.settings.setValue("port",     self.inp_port.value())
+        self.settings.setValue("username", self.inp_user.text().strip())
+        self.settings.setValue("topic",    self.inp_topic.text().strip() or "#")
 
     def _toggle_connection(self):
         if not self._is_connected:
@@ -514,13 +542,12 @@ class MQTTViewer(QMainWindow):
             if not host:
                 QMessageBox.warning(self, "Fehler", "Bitte Host angeben.")
                 return
+            self._save_settings()
             self.btn_connect.setEnabled(False)
             self.btn_connect.setText("Verbinde…")
             self.worker.connect_broker(
-                host,
-                self.inp_port.value(),
-                self.inp_user.text().strip(),
-                self.inp_pass.text(),
+                host, self.inp_port.value(),
+                self.inp_user.text().strip(), self.inp_pass.text(),
                 self.inp_topic.text().strip() or "#",
             )
         else:
@@ -545,20 +572,18 @@ class MQTTViewer(QMainWindow):
         return ""
 
     @staticmethod
-    def _tech_nr_from_topic(topic: str) -> str | None:
-        """Extrahiert die Tech-Nr aus dem Topic (Segment nach dcu/du/pau)."""
+    def _tech_nr_from_topic(topic: str):
         known = {"dcu", "du", "pau"}
         parts = topic.split("/")
         for i, seg in enumerate(parts):
             if seg in known and i + 1 < len(parts):
-                tech = parts[i + 1].split(":")[0]  # "42094:01" → "42094"
+                tech = parts[i + 1].split(":")[0]
                 if tech.isdigit():
                     return tech
         return None
 
     def handle_message(self, topic: str, payload: str):
         self._total += 1
-
         mt = self.meldungen_tab
 
         # SboId-Filter
@@ -573,15 +598,13 @@ class MQTTViewer(QMainWindow):
         if mt.chk_dcu.isChecked():   allowed.add("dcu")
         if mt.chk_du.isChecked():    allowed.add("du")
         if mt.chk_pau.isChecked():   allowed.add("pau")
-
         if device_type in {"dcu", "du", "pau"}:
             if device_type not in allowed:
                 self._update_status()
                 return
-        else:
-            if not mt.chk_other.isChecked():
-                self._update_status()
-                return
+        elif not mt.chk_other.isChecked():
+            self._update_status()
+            return
 
         # JSON parsen
         try:
@@ -590,10 +613,15 @@ class MQTTViewer(QMainWindow):
             self._update_status()
             return
 
-        health = data.get("health", "")
+        health   = data.get("health", "")
+        tech_nr  = self._tech_nr_from_topic(topic)
+
+        # Deaktivierte Anlage → komplett ignorieren
+        if tech_nr and tech_nr in self.anlagen_tab.disabled_devices:
+            self._update_status()
+            return
 
         # Anlagen-Status aktualisieren
-        tech_nr = self._tech_nr_from_topic(topic)
         if tech_nr:
             new_status = "ok" if health == "HEALTH_OK" else "error"
             if self.device_status.get(tech_nr) != new_status:
@@ -613,9 +641,7 @@ class MQTTViewer(QMainWindow):
 
     def _update_status(self):
         state = "Verbunden" if self._is_connected else "Getrennt"
-        self.statusBar().showMessage(
-            f"{state}  |  Empfangen: {self._total}  |  Angezeigt: {self._shown}"
-        )
+        self.statusBar().showMessage(f"{state}  |  Empfangen: {self._total}  |  Angezeigt: {self._shown}")
 
     def closeEvent(self, event):
         self.worker.disconnect_broker()
@@ -626,8 +652,7 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName("VBZ MQTT Live")
-    icon = create_vbz_icon()
-    app.setWindowIcon(icon)
+    app.setWindowIcon(create_vbz_icon())
     win = MQTTViewer()
     win.show()
     sys.exit(app.exec_())
