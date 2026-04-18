@@ -25,19 +25,20 @@ jobs:
         run: pip install paho-mqtt PyQt5 openpyxl pyinstaller
 
       - name: EXE bauen
-        run: pyinstaller --onefile --windowed --name mqtt_viewer mqtt_viewer.py
+        run: pyinstaller --onefile --windowed --name vbz_mqtt_live --version-file version_info.txt mqtt_viewer.py
 
       - name: Release erstellen / aktualisieren
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "MQTT Viewer – aktuellster Build"
+          name: "VBZ MQTT Live – aktuellster Build"
           body: |
             Automatisch gebaute Windows-EXE aus dem letzten Commit auf `main`.
 
+            **Herausgeber:** Daniel Schwander
             **Voraussetzung:** Windows 10/11 (64-bit), keine weitere Installation nötig.
 
-            **Starten:** `mqtt_viewer.exe` doppelklicken.
-          files: dist/mqtt_viewer.exe
+            **Starten:** `vbz_mqtt_live.exe` doppelklicken.
+          files: dist/vbz_mqtt_live.exe
           make_latest: true
           prerelease: false
