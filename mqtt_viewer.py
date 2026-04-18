@@ -11,9 +11,45 @@ from PyQt5.QtWidgets import (
     QSpinBox, QMessageBox, QAbstractItemView, QTabWidget, QComboBox,
     QFileDialog
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QSettings
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect
 from PyQt5.QtGui import QColor, QFont, QIcon, QPixmap, QPainter
 import paho.mqtt.client as mqtt
+
+
+class Settings:
+    """Gemeinsame Einstellungen als JSON-Datei neben der EXE.
+    Alle Benutzer, die die EXE öffnen können, teilen dieselben Einstellungen."""
+
+    def __init__(self):
+        if getattr(sys, "frozen", False):
+            base = os.path.dirname(sys.executable)
+        else:
+            base = os.path.dirname(os.path.abspath(__file__))
+        self._path = os.path.join(base, "vbz_mqtt_settings.json")
+        self._data = self._load()
+
+    def _load(self) -> dict:
+        if os.path.exists(self._path):
+            try:
+                with open(self._path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+
+    def _save(self):
+        try:
+            with open(self._path, "w", encoding="utf-8") as f:
+                json.dump(self._data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Einstellungen konnten nicht gespeichert werden: {e}")
+
+    def value(self, key: str, default=None):
+        return self._data.get(key, default)
+
+    def setValue(self, key: str, value):
+        self._data[key] = value
+        self._save()
 
 
 def create_vbz_icon() -> QIcon:
@@ -102,22 +138,27 @@ class MQTTWorker(QThread):
 # ---------------------------------------------------------------------------
 
 class AnlagenTab(QWidget):
-    def __init__(self, device_status: dict, settings: QSettings):
+    def __init__(self, device_status: dict, settings: Settings):
         super().__init__()
         self.device_status = device_status
         self.settings = settings
         self.anlagen = []
 
-        # Deaktivierte Anlagen aus Einstellungen laden
-        raw = self.settings.value("disabled_devices", "")
-        self.disabled_devices: set = set(raw.split(",")) if raw else set()
+        # Deaktivierte Anlagen laden
+        self.disabled_devices: set = set(self.settings.value("disabled_devices", []))
 
         self._setup_ui()
 
-        # Gespeicherte Excel-Datei automatisch laden
-        saved_path = self.settings.value("excel_path", "")
-        if saved_path and os.path.exists(saved_path):
-            self._load_excel(saved_path)
+        # Gespeicherte Anlagendaten direkt aus Einstellungen laden (kein Dateizugriff nötig)
+        saved_anlagen = self.settings.value("anlagen_data", [])
+        if saved_anlagen:
+            self.anlagen = saved_anlagen
+            self._populate_mvu_filter()
+            saved_name = self.settings.value("excel_filename", "")
+            if saved_name:
+                self.lbl_file.setText(f"{saved_name}  ✓ (gespeichert)")
+                self.lbl_file.setStyleSheet("color: #1888b8;")
+            self.refresh_table()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -157,6 +198,15 @@ class AnlagenTab(QWidget):
         self.table.setSortingEnabled(True)
         layout.addWidget(self.table)
 
+    def _populate_mvu_filter(self):
+        mvus = sorted(set(a["mvu"] for a in self.anlagen if a["mvu"]))
+        self.combo_mvu.blockSignals(True)
+        self.combo_mvu.clear()
+        self.combo_mvu.addItem("Alle")
+        for mvu in mvus:
+            self.combo_mvu.addItem(mvu)
+        self.combo_mvu.blockSignals(False)
+
     def import_excel(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Excel-Datei öffnen", "", "Excel-Dateien (*.xlsx *.xls)"
@@ -164,7 +214,6 @@ class AnlagenTab(QWidget):
         if not path:
             return
         self._load_excel(path)
-        self.settings.setValue("excel_path", path)
 
     def _load_excel(self, path: str):
         try:
@@ -214,16 +263,15 @@ class AnlagenTab(QWidget):
                     "haltestelle": str(halt_val).strip() if halt_val else "",
                 })
 
-            mvus = sorted(set(a["mvu"] for a in self.anlagen if a["mvu"]))
-            self.combo_mvu.blockSignals(True)
-            self.combo_mvu.clear()
-            self.combo_mvu.addItem("Alle")
-            for mvu in mvus:
-                self.combo_mvu.addItem(mvu)
-            self.combo_mvu.blockSignals(False)
+            self._populate_mvu_filter()
 
-            self.lbl_file.setText(os.path.basename(path))
-            self.lbl_file.setStyleSheet("color: black;")
+            # Anlagendaten im Settings-File speichern (für alle Benutzer)
+            filename = os.path.basename(path)
+            self.settings.setValue("anlagen_data",    self.anlagen)
+            self.settings.setValue("excel_filename",  filename)
+
+            self.lbl_file.setText(f"{filename}  ✓ (gespeichert)")
+            self.lbl_file.setStyleSheet("color: #1888b8;")
             self.refresh_table()
 
         except Exception as e:
@@ -245,8 +293,8 @@ class AnlagenTab(QWidget):
             self.disabled_devices.discard(tech_nr)
         else:
             self.disabled_devices.add(tech_nr)
-        # Einstellungen speichern
-        self.settings.setValue("disabled_devices", ",".join(self.disabled_devices))
+        # Einstellungen speichern (als Liste, für alle Benutzer)
+        self.settings.setValue("disabled_devices", list(self.disabled_devices))
         # Zeile sofort durchstreichen/wiederherstellen
         self._apply_strikethrough()
 
@@ -454,7 +502,7 @@ class MeldungenTab(QWidget):
 class MQTTViewer(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.settings = QSettings("VBZ", "MQTTLive")
+        self.settings = Settings()
         self.worker = MQTTWorker()
         self.worker.message_received.connect(self.handle_message)
         self.worker.connection_changed.connect(self.handle_connection)
