@@ -22,7 +22,7 @@ jobs:
           python-version: "3.11"
 
       - name: Abhängigkeiten installieren
-        run: pip install paho-mqtt PyQt5 pyinstaller
+        run: pip install paho-mqtt PyQt5 openpyxl pyinstaller
 
       - name: EXE bauen
         run: pyinstaller --onefile --windowed --name mqtt_viewer mqtt_viewer.py
