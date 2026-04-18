@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """VBZ MQTT Live - Meldungsanzeige + Anlagen-Übersicht mit Excel-Import"""
 
+__version__ = "1.0.0"
+
 import sys
 import json
 import os
@@ -518,7 +520,7 @@ class MQTTViewer(QMainWindow):
         self._load_settings()
 
     def _setup_ui(self):
-        self.setWindowTitle("VBZ MQTT Live")
+        self.setWindowTitle(f"VBZ MQTT Live  v{__version__}")
         self.setWindowIcon(create_vbz_icon())
         self.setMinimumSize(1300, 750)
 
