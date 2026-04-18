@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MQTT Viewer - Meldungsanzeige + Anlagen-Übersicht mit Excel-Import"""
+"""VBZ MQTT Live - Meldungsanzeige + Anlagen-Übersicht mit Excel-Import"""
 
 import sys
 import json
@@ -10,9 +10,23 @@ from PyQt5.QtWidgets import (
     QSpinBox, QMessageBox, QAbstractItemView, QTabWidget, QComboBox,
     QFileDialog
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect
+from PyQt5.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QBrush
 import paho.mqtt.client as mqtt
+
+
+def create_vbz_icon() -> QIcon:
+    """Erstellt das VBZ-Logo als Icon (blau, weisser Text)."""
+    size = 64
+    px = QPixmap(size, size)
+    px.fill(QColor("#1888b8"))
+    p = QPainter(px)
+    p.setPen(Qt.white)
+    font = QFont("Arial", 22, QFont.Bold)
+    p.setFont(font)
+    p.drawText(QRect(0, 0, size, size), Qt.AlignCenter, "VBZ")
+    p.end()
+    return QIcon(px)
 
 
 class MQTTWorker(QThread):
@@ -344,10 +358,21 @@ class MeldungenTab(QWidget):
         lay.addWidget(self.detail)
         return box
 
+    def _find_row(self, topic: str) -> int:
+        """Gibt die Zeile für dieses Topic zurück, oder -1 wenn nicht vorhanden."""
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            if item and item.data(Qt.UserRole + 1) == topic:
+                return r
+        return -1
+
     def add_row(self, topic: str, device_type: str, data: dict, raw: str):
         self.table.setSortingEnabled(False)
-        row = self.table.rowCount()
-        self.table.insertRow(row)
+
+        existing = self._find_row(topic)
+        row = existing if existing >= 0 else self.table.rowCount()
+        if existing < 0:
+            self.table.insertRow(row)
 
         header = data.get("msg_header", {})
         usage  = data.get("usage", {})
@@ -371,7 +396,8 @@ class MeldungenTab(QWidget):
             item = QTableWidgetItem(val)
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             if col == 0:
-                item.setData(Qt.UserRole, raw)
+                item.setData(Qt.UserRole, raw)        # vollständiges JSON
+                item.setData(Qt.UserRole + 1, topic)  # Topic als Schlüssel
             self.table.setItem(row, col, item)
 
         if health in ("HEALTH_OK", ""):
@@ -384,7 +410,8 @@ class MeldungenTab(QWidget):
             self.table.item(row, col).setBackground(color)
 
         self.table.setSortingEnabled(True)
-        self.table.scrollToBottom()
+        if existing < 0:
+            self.table.scrollToBottom()
 
     def clear_table(self):
         self.table.setRowCount(0)
@@ -420,7 +447,8 @@ class MQTTViewer(QMainWindow):
         self._setup_ui()
 
     def _setup_ui(self):
-        self.setWindowTitle("MQTT Viewer")
+        self.setWindowTitle("VBZ MQTT Live")
+        self.setWindowIcon(create_vbz_icon())
         self.setMinimumSize(1300, 750)
 
         central = QWidget()
@@ -577,7 +605,9 @@ class MQTTViewer(QMainWindow):
             self._update_status()
             return
 
-        self._shown += 1
+        is_new = mt._find_row(topic) < 0
+        if is_new:
+            self._shown += 1
         mt.add_row(topic, device_type, data, payload)
         self._update_status()
 
@@ -595,6 +625,9 @@ class MQTTViewer(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setApplicationName("VBZ MQTT Live")
+    icon = create_vbz_icon()
+    app.setWindowIcon(icon)
     win = MQTTViewer()
     win.show()
     sys.exit(app.exec_())
