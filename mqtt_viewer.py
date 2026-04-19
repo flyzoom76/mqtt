@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """VBZ MQTT Live - Meldungsanzeige + Anlagen-Übersicht mit Excel-Import"""
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 import sys
 import json
@@ -70,7 +70,7 @@ def make_lamp(status: str) -> QLabel:
     label = QLabel("●")
     label.setAlignment(Qt.AlignCenter)
     label.setFont(QFont("Arial", 16))
-    color = {"ok": "#22c55e", "error": "#f97316", "offline": "#ef4444"}.get(status, "#ef4444")
+    color = {"ok": "#22c55e", "error": "#ffaa00", "offline": "#ef4444"}.get(status, "#ef4444")
     label.setStyleSheet(f"color: {color};")
     tooltip = {"ok": "HEALTH_OK", "error": "Health-Fehler", "offline": "Keine Meldung"}.get(status, "")
     label.setToolTip(tooltip)
@@ -182,6 +182,21 @@ class AnlagenTab(QWidget):
         self.combo_mvu.addItem("Alle")
         self.combo_mvu.currentTextChanged.connect(self.refresh_table)
         toolbar.addWidget(self.combo_mvu)
+
+        toolbar.addSpacing(20)
+        toolbar.addWidget(QLabel("Suche Tech Nr:"))
+        self.inp_search_tech = QLineEdit()
+        self.inp_search_tech.setPlaceholderText("z.B. 42190")
+        self.inp_search_tech.setFixedWidth(110)
+        self.inp_search_tech.textChanged.connect(self.refresh_table)
+        toolbar.addWidget(self.inp_search_tech)
+
+        toolbar.addWidget(QLabel("Haltestelle:"))
+        self.inp_search_halt = QLineEdit()
+        self.inp_search_halt.setPlaceholderText("z.B. Bahnh…")
+        self.inp_search_halt.setFixedWidth(160)
+        self.inp_search_halt.textChanged.connect(self.refresh_table)
+        toolbar.addWidget(self.inp_search_halt)
 
         toolbar.addStretch()
         self.lbl_count = QLabel("")
@@ -318,8 +333,16 @@ class AnlagenTab(QWidget):
                     item.setForeground(color)
 
     def refresh_table(self):
-        selected = self.combo_mvu.currentText()
-        filtered = [a for a in self.anlagen if selected == "Alle" or a["mvu"] == selected]
+        selected   = self.combo_mvu.currentText()
+        tech_query = self.inp_search_tech.text().strip().lower()
+        halt_query = self.inp_search_halt.text().strip().lower()
+
+        filtered = [
+            a for a in self.anlagen
+            if (selected == "Alle" or a["mvu"] == selected)
+            and (not tech_query or tech_query in a["tech_nr"].lower())
+            and (not halt_query or halt_query in a["haltestelle"].lower())
+        ]
 
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
@@ -359,6 +382,8 @@ class AnlagenTab(QWidget):
 # ---------------------------------------------------------------------------
 
 class MeldungenTab(QWidget):
+    cleared = pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self._setup_ui()
@@ -483,6 +508,7 @@ class MeldungenTab(QWidget):
     def clear_table(self):
         self.table.setRowCount(0)
         self.detail.clear()
+        self.cleared.emit()
 
     def _show_detail(self):
         row = self.table.currentRow()
@@ -534,6 +560,7 @@ class MQTTViewer(QMainWindow):
 
         self.tabs = QTabWidget()
         self.meldungen_tab = MeldungenTab()
+        self.meldungen_tab.cleared.connect(self._on_meldungen_cleared)
         self.anlagen_tab   = AnlagenTab(self.device_status, self.settings)
         self.tabs.addTab(self.meldungen_tab, "Meldungen")
         self.tabs.addTab(self.anlagen_tab,   "Anlagen")
@@ -650,12 +677,19 @@ class MQTTViewer(QMainWindow):
         else:
             self.worker.disconnect_broker()
 
+    def _on_meldungen_cleared(self):
+        self._shown = 0
+        self._update_status()
+
     def handle_connection(self, connected: bool, message: str):
         self._is_connected = connected
         self.btn_connect.setEnabled(True)
         if connected:
+            # Liste und Zähler beim Verbinden zurücksetzen
+            self.meldungen_tab.clear_table()
+            self._total = 0
+            self._shown = 0
             self.btn_connect.setText("Trennen")
-            self.statusBar().showMessage(f"✓  {message}  |  Empfangen: 0  |  Angezeigt: 0")
             self._start_countdown()
         else:
             self.btn_connect.setText("Verbinden")
