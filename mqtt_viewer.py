@@ -694,7 +694,7 @@ class MQTTViewer(QMainWindow):
         if self._countdown_secs > 0:
             m, s = divmod(self._countdown_secs, 60)
             self.lbl_countdown.setText(
-                f"⏱  Noch {m}:{s:02d} min bis sich alle Anlagen gemeldet haben"
+                f"⏱  Noch {m}:{s:02d} min bis alle Anlagen sich gemeldet haben"
             )
             self.lbl_countdown.setStyleSheet(
                 "color: #b45309; background: #fef9c3; border-radius: 6px; padding: 2px 12px;"
