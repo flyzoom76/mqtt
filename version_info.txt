@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 0, 0),
-    prodvers=(1, 0, 0, 0),
+    filevers=(1, 0, 2, 0),
+    prodvers=(1, 0, 2, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,12 +16,12 @@ VSVersionInfo(
         [
           StringStruct(u'CompanyName',      u'Daniel Schwander'),
           StringStruct(u'FileDescription',  u'VBZ MQTT Live – Echtzeit-Anlagenüberwachung'),
-          StringStruct(u'FileVersion',      u'1.0.0'),
+          StringStruct(u'FileVersion',      u'1.0.2'),
           StringStruct(u'InternalName',     u'vbz_mqtt_live'),
           StringStruct(u'LegalCopyright',   u'© 2026 Daniel Schwander'),
           StringStruct(u'OriginalFilename', u'vbz_mqtt_live.exe'),
           StringStruct(u'ProductName',      u'VBZ MQTT Live'),
-          StringStruct(u'ProductVersion',   u'1.0.0'),
+          StringStruct(u'ProductVersion',   u'1.0.2'),
         ]
       )
     ]),
