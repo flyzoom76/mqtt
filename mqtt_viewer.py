@@ -408,45 +408,52 @@ class MeldungenTab(QWidget):
         outer = QVBoxLayout(box)
         outer.setSpacing(4)
 
-        row1 = QHBoxLayout()
-        row1.addWidget(QLabel("SboId:"))
-        self.inp_sboid = QLineEdit()
-        self.inp_sboid.setPlaceholderText("z.B. 100648")
-        self.inp_sboid.setFixedWidth(120)
-        self.inp_sboid.setToolTip("Filtert Meldungen, deren Topic diese SboId enthält.\nLeer lassen = alle Topics.")
-        self.inp_sboid.textChanged.connect(self._apply_filters)
-        row1.addWidget(self.inp_sboid)
-        self.chk_health = QCheckBox("Nur Fehler (HEALTH_OK ausblenden)")
-        self.chk_health.setChecked(True)
-        self.chk_health.stateChanged.connect(self._apply_filters)
-        row1.addWidget(self.chk_health)
-        btn_clear = QPushButton("Leeren")
-        btn_clear.setFixedWidth(75)
-        btn_clear.clicked.connect(self.clear_table)
-        row1.addWidget(btn_clear)
-        outer.addLayout(row1)
+        # Zeile 1: MVU-Checkboxen (dynamisch aus Excel)
+        row_mvu = QHBoxLayout()
+        row_mvu.addWidget(QLabel("MVU:"))
+        self._mvu_checkboxes: dict = {}
+        self._mvu_container = QWidget()
+        self._mvu_container_layout = QHBoxLayout(self._mvu_container)
+        self._mvu_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._mvu_container_layout.setSpacing(6)
+        self._lbl_no_mvu = QLabel("(keine Excel-Daten)")
+        self._lbl_no_mvu.setStyleSheet("color: grey;")
+        self._mvu_container_layout.addWidget(self._lbl_no_mvu)
+        self._mvu_container_layout.addStretch()
+        row_mvu.addWidget(self._mvu_container)
+        outer.addLayout(row_mvu)
 
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Gerätetyp:"))
+        # Zeile 2: Gerätetyp-Checkboxen
+        row_typ = QHBoxLayout()
+        row_typ.addWidget(QLabel("Gerätetyp:"))
         self.chk_dcu     = QCheckBox("Rechner");  self.chk_dcu.setChecked(True)
         self.chk_du      = QCheckBox("Display");  self.chk_du.setChecked(True)
         self.chk_pau     = QCheckBox("Akustik");  self.chk_pau.setChecked(True)
         self.chk_offline = QCheckBox("offline");  self.chk_offline.setChecked(True)
         for chk in (self.chk_dcu, self.chk_du, self.chk_pau, self.chk_offline):
             chk.stateChanged.connect(self._apply_filters)
-            row2.addWidget(chk)
-        row2.addStretch()
-        outer.addLayout(row2)
+            row_typ.addWidget(chk)
+        row_typ.addStretch()
+        outer.addLayout(row_typ)
 
-        row3 = QHBoxLayout()
-        row3.addWidget(QLabel("MVU:"))
-        self.combo_mvu_filter = QComboBox()
-        self.combo_mvu_filter.setMinimumWidth(160)
-        self.combo_mvu_filter.addItem("Alle")
-        self.combo_mvu_filter.currentTextChanged.connect(self._apply_filters)
-        row3.addWidget(self.combo_mvu_filter)
-        row3.addStretch()
-        outer.addLayout(row3)
+        # Zeile 3: SboId, Health, Leeren
+        row_ctrl = QHBoxLayout()
+        row_ctrl.addWidget(QLabel("SboId:"))
+        self.inp_sboid = QLineEdit()
+        self.inp_sboid.setPlaceholderText("z.B. 100648")
+        self.inp_sboid.setFixedWidth(120)
+        self.inp_sboid.setToolTip("Filtert Meldungen, deren Topic diese SboId enthält.\nLeer lassen = alle Topics.")
+        self.inp_sboid.textChanged.connect(self._apply_filters)
+        row_ctrl.addWidget(self.inp_sboid)
+        self.chk_health = QCheckBox("Nur Fehler (HEALTH_OK ausblenden)")
+        self.chk_health.setChecked(True)
+        self.chk_health.stateChanged.connect(self._apply_filters)
+        row_ctrl.addWidget(self.chk_health)
+        btn_clear = QPushButton("Leeren")
+        btn_clear.setFixedWidth(75)
+        btn_clear.clicked.connect(self.clear_table)
+        row_ctrl.addWidget(btn_clear)
+        outer.addLayout(row_ctrl)
 
         return box
 
@@ -486,15 +493,22 @@ class MeldungenTab(QWidget):
         return -1
 
     def populate_mvu_filter(self, mvus: list):
-        current = self.combo_mvu_filter.currentText()
-        self.combo_mvu_filter.blockSignals(True)
-        self.combo_mvu_filter.clear()
-        self.combo_mvu_filter.addItem("Alle")
-        for mvu in mvus:
-            self.combo_mvu_filter.addItem(mvu)
-        idx = self.combo_mvu_filter.findText(current)
-        self.combo_mvu_filter.setCurrentIndex(max(0, idx))
-        self.combo_mvu_filter.blockSignals(False)
+        for chk in self._mvu_checkboxes.values():
+            self._mvu_container_layout.removeWidget(chk)
+            chk.deleteLater()
+        self._mvu_checkboxes = {}
+        if mvus:
+            self._lbl_no_mvu.hide()
+            stretch_idx = self._mvu_container_layout.count() - 1
+            for mvu in mvus:
+                chk = QCheckBox(mvu)
+                chk.setChecked(True)
+                chk.stateChanged.connect(self._apply_filters)
+                self._mvu_checkboxes[mvu] = chk
+                self._mvu_container_layout.insertWidget(stretch_idx, chk)
+                stretch_idx += 1
+        else:
+            self._lbl_no_mvu.show()
 
     def _row_passes_filter(self, row: int) -> bool:
         type_item   = self.table.item(row, 1)
@@ -517,11 +531,11 @@ class MeldungenTab(QWidget):
         elif device_type:
             return False  # unbekannte Typen grundsätzlich ausblenden
 
-        sel_mvu = self.combo_mvu_filter.currentText()
-        if sel_mvu != "Alle":
+        if self._mvu_checkboxes:
             col0 = self.table.item(row, 0)
             row_mvu = col0.data(Qt.UserRole + 3) if col0 else ""
-            if row_mvu != sel_mvu:
+            chk_mvu = self._mvu_checkboxes.get(row_mvu)
+            if chk_mvu is not None and not chk_mvu.isChecked():
                 return False
 
         return True
