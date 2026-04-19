@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """VBZ MQTT Live - Meldungsanzeige + Anlagen-Übersicht mit Excel-Import"""
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 import sys
 import json
@@ -201,6 +201,11 @@ class AnlagenTab(QWidget):
         self.inp_search_halt.textChanged.connect(self.refresh_table)
         toolbar.addWidget(self.inp_search_halt)
 
+        toolbar.addSpacing(20)
+        self.chk_only_disabled = QCheckBox("Nur deaktivierte")
+        self.chk_only_disabled.stateChanged.connect(self.refresh_table)
+        toolbar.addWidget(self.chk_only_disabled)
+
         toolbar.addStretch()
         self.lbl_count = QLabel("")
         toolbar.addWidget(self.lbl_count)
@@ -341,11 +346,13 @@ class AnlagenTab(QWidget):
         tech_query = self.inp_search_tech.text().strip().lower()
         halt_query = self.inp_search_halt.text().strip().lower()
 
+        only_disabled = self.chk_only_disabled.isChecked()
         filtered = [
             a for a in self.anlagen
             if (selected == "Alle" or a["mvu"] == selected)
             and (not tech_query or tech_query in a["tech_nr"].lower())
             and (not halt_query or halt_query in a["haltestelle"].lower())
+            and (not only_disabled or a["tech_nr"] in self.disabled_devices)
         ]
 
         self.table.setSortingEnabled(False)
@@ -416,6 +423,11 @@ class MeldungenTab(QWidget):
         self._mvu_container_layout = QHBoxLayout(self._mvu_container)
         self._mvu_container_layout.setContentsMargins(0, 0, 0, 0)
         self._mvu_container_layout.setSpacing(6)
+        self.chk_mvu_all = QCheckBox("Alle")
+        self.chk_mvu_all.setChecked(True)
+        self.chk_mvu_all.setVisible(False)
+        self.chk_mvu_all.stateChanged.connect(self._on_mvu_all_changed)
+        self._mvu_container_layout.addWidget(self.chk_mvu_all)
         self._lbl_no_mvu = QLabel("(keine Excel-Daten)")
         self._lbl_no_mvu.setStyleSheet("color: grey;")
         self._mvu_container_layout.addWidget(self._lbl_no_mvu)
@@ -426,12 +438,16 @@ class MeldungenTab(QWidget):
         # Zeile 2: Gerätetyp-Checkboxen
         row_typ = QHBoxLayout()
         row_typ.addWidget(QLabel("Gerätetyp:"))
+        self.chk_typ_all = QCheckBox("Alle")
+        self.chk_typ_all.setChecked(True)
+        self.chk_typ_all.stateChanged.connect(self._on_typ_all_changed)
+        row_typ.addWidget(self.chk_typ_all)
         self.chk_dcu     = QCheckBox("Rechner");  self.chk_dcu.setChecked(True)
         self.chk_du      = QCheckBox("Display");  self.chk_du.setChecked(True)
         self.chk_pau     = QCheckBox("Akustik");  self.chk_pau.setChecked(True)
         self.chk_offline = QCheckBox("offline");  self.chk_offline.setChecked(True)
         for chk in (self.chk_dcu, self.chk_du, self.chk_pau, self.chk_offline):
-            chk.stateChanged.connect(self._apply_filters)
+            chk.stateChanged.connect(self._on_typ_individual_changed)
             row_typ.addWidget(chk)
         row_typ.addStretch()
         outer.addLayout(row_typ)
@@ -499,16 +515,51 @@ class MeldungenTab(QWidget):
         self._mvu_checkboxes = {}
         if mvus:
             self._lbl_no_mvu.hide()
+            self.chk_mvu_all.setVisible(True)
+            self.chk_mvu_all.blockSignals(True)
+            self.chk_mvu_all.setChecked(True)
+            self.chk_mvu_all.blockSignals(False)
             stretch_idx = self._mvu_container_layout.count() - 1
             for mvu in mvus:
                 chk = QCheckBox(mvu)
                 chk.setChecked(True)
-                chk.stateChanged.connect(self._apply_filters)
+                chk.stateChanged.connect(self._on_mvu_individual_changed)
                 self._mvu_checkboxes[mvu] = chk
                 self._mvu_container_layout.insertWidget(stretch_idx, chk)
                 stretch_idx += 1
         else:
             self._lbl_no_mvu.show()
+            self.chk_mvu_all.setVisible(False)
+
+    def _on_mvu_all_changed(self, state: int):
+        checked = state == Qt.Checked
+        for chk in self._mvu_checkboxes.values():
+            chk.blockSignals(True)
+            chk.setChecked(checked)
+            chk.blockSignals(False)
+        self._apply_filters()
+
+    def _on_mvu_individual_changed(self):
+        all_checked = all(c.isChecked() for c in self._mvu_checkboxes.values())
+        self.chk_mvu_all.blockSignals(True)
+        self.chk_mvu_all.setChecked(all_checked)
+        self.chk_mvu_all.blockSignals(False)
+        self._apply_filters()
+
+    def _on_typ_all_changed(self, state: int):
+        checked = state == Qt.Checked
+        for chk in (self.chk_dcu, self.chk_du, self.chk_pau, self.chk_offline):
+            chk.blockSignals(True)
+            chk.setChecked(checked)
+            chk.blockSignals(False)
+        self._apply_filters()
+
+    def _on_typ_individual_changed(self):
+        all_checked = all(c.isChecked() for c in (self.chk_dcu, self.chk_du, self.chk_pau, self.chk_offline))
+        self.chk_typ_all.blockSignals(True)
+        self.chk_typ_all.setChecked(all_checked)
+        self.chk_typ_all.blockSignals(False)
+        self._apply_filters()
 
     def _row_passes_filter(self, row: int) -> bool:
         type_item   = self.table.item(row, 1)
@@ -570,6 +621,7 @@ class MeldungenTab(QWidget):
         for col, val in enumerate(cells):
             item = QTableWidgetItem(val)
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            item.setToolTip(val)
             if col == 0:
                 item.setData(Qt.UserRole,     raw)
                 item.setData(Qt.UserRole + 1, topic)
