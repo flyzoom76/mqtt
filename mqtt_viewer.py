@@ -636,7 +636,7 @@ class MQTTViewer(QMainWindow):
     def _setup_ui(self):
         self.setWindowTitle(f"VBZ MQTT Live  v{__version__}")
         self.setWindowIcon(create_vbz_icon())
-        self.setMinimumSize(1300, 750)
+        self.setMinimumSize(900, 600)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -738,7 +738,7 @@ class MQTTViewer(QMainWindow):
 
         row.addWidget(QLabel("Host:"))
         self.inp_host = QLineEdit()
-        self.inp_host.setFixedWidth(160)
+        self.inp_host.setFixedWidth(130)
         row.addWidget(self.inp_host)
 
         row.addWidget(QLabel("Port:"))
@@ -749,18 +749,18 @@ class MQTTViewer(QMainWindow):
 
         row.addWidget(QLabel("Benutzer:"))
         self.inp_user = QLineEdit()
-        self.inp_user.setFixedWidth(110)
+        self.inp_user.setFixedWidth(90)
         row.addWidget(self.inp_user)
 
         row.addWidget(QLabel("Passwort:"))
         self.inp_pass = QLineEdit()
         self.inp_pass.setEchoMode(QLineEdit.Password)
-        self.inp_pass.setFixedWidth(110)
+        self.inp_pass.setFixedWidth(90)
         row.addWidget(self.inp_pass)
 
         row.addWidget(QLabel("Topic:"))
         self.inp_topic = QLineEdit()
-        self.inp_topic.setFixedWidth(130)
+        self.inp_topic.setFixedWidth(110)
         row.addWidget(self.inp_topic)
 
         self.btn_connect = QPushButton("Verbinden")
