@@ -781,21 +781,34 @@ class MQTTViewer(QMainWindow):
 
     def handle_message(self, topic: str, payload: str):
         self._total += 1
+        mt = self.meldungen_tab
 
-        # JSON parsen
+        # ── Vorfilter (verhindert Überschwemmung der Tabelle) ──────────────
+        # SboId: wenn gesetzt, nur passende Topics verarbeiten
+        sboid = mt.inp_sboid.text().strip()
+        if sboid and sboid not in topic:
+            self._update_status()
+            return
+
+        # Gerätetyp: vehicle/mfd o.ä. nie in die Tabelle aufnehmen
+        device_type = self._device_type_from_topic(topic)
+        if device_type not in {"dcu", "du", "pau"}:
+            if not mt.chk_other.isChecked():
+                self._update_status()
+                return
+
+        # JSON parsen + Typprüfung
         try:
             data = json.loads(payload)
         except json.JSONDecodeError:
             self._update_status()
             return
-
         if not isinstance(data, dict):
             self._update_status()
             return
 
-        health      = data.get("health", "")
-        device_type = self._device_type_from_topic(topic)
-        tech_nr     = self._tech_nr_from_topic(topic)
+        health  = data.get("health", "")
+        tech_nr = self._tech_nr_from_topic(topic)
 
         # Deaktivierte Anlage → komplett ignorieren
         if tech_nr and tech_nr in self.anlagen_tab.disabled_devices:
@@ -809,8 +822,9 @@ class MQTTViewer(QMainWindow):
                 self.device_status[tech_nr] = new_status
                 self.anlagen_tab.update_lamps()
 
-        # Zur Tabelle hinzufügen/aktualisieren — Filter steuern Sichtbarkeit
-        self.meldungen_tab.add_row(topic, device_type, data, payload)
+        # Zeile hinzufügen/aktualisieren — Health + Typ-Checkboxen
+        # steuern Sichtbarkeit dynamisch via setRowHidden
+        mt.add_row(topic, device_type, data, payload)
         self._update_status()
 
     def _update_status(self):
