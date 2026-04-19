@@ -6,6 +6,7 @@ __version__ = "1.0.1"
 import sys
 import json
 import os
+from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGroupBox, QLabel, QLineEdit, QPushButton, QTableWidget,
@@ -423,10 +424,12 @@ class MeldungenTab(QWidget):
         row2.addWidget(QLabel("Gerätetyp:"))
         self.chk_dcu   = QCheckBox("dcu");   self.chk_dcu.setChecked(True)
         self.chk_du    = QCheckBox("du");    self.chk_du.setChecked(True)
-        self.chk_pau   = QCheckBox("pau");   self.chk_pau.setChecked(True)
-        self.chk_other = QCheckBox("andere"); self.chk_other.setChecked(False)
-        for chk in (self.chk_dcu, self.chk_du, self.chk_pau, self.chk_other):
+        self.chk_pau     = QCheckBox("pau");     self.chk_pau.setChecked(True)
+        self.chk_offline = QCheckBox("offline"); self.chk_offline.setChecked(True)
+        self.chk_other   = QCheckBox("andere");  self.chk_other.setChecked(False)
+        for chk in (self.chk_dcu, self.chk_du, self.chk_pau, self.chk_offline, self.chk_other):
             row2.addWidget(chk)
+        self.chk_offline.stateChanged.connect(self._apply_offline_filter)
         row2.addStretch()
         outer.addLayout(row2)
         return box
@@ -466,6 +469,13 @@ class MeldungenTab(QWidget):
                 return r
         return -1
 
+    def _apply_offline_filter(self):
+        show = self.chk_offline.isChecked()
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            if item and item.data(Qt.UserRole + 2) == "offline":
+                self.table.setRowHidden(r, not show)
+
     def add_row(self, topic: str, device_type: str, data: dict, raw: str):
         self.table.setSortingEnabled(False)
         existing = self._find_row(topic)
@@ -490,9 +500,12 @@ class MeldungenTab(QWidget):
             if col == 0:
                 item.setData(Qt.UserRole,     raw)
                 item.setData(Qt.UserRole + 1, topic)
+                item.setData(Qt.UserRole + 2, device_type)
             self.table.setItem(row, col, item)
 
-        if health in ("HEALTH_OK", ""):
+        if device_type == "offline":
+            color = QColor(200, 200, 200)   # grau
+        elif health in ("HEALTH_OK", ""):
             color = QColor(255, 255, 200)
         elif "WARN" in health or "DEGRADED" in health:
             color = QColor(255, 220, 150)
@@ -500,6 +513,10 @@ class MeldungenTab(QWidget):
             color = QColor(255, 180, 180)
         for col in range(self.table.columnCount()):
             self.table.item(row, col).setBackground(color)
+
+        # offline-Filter direkt anwenden
+        if device_type == "offline" and not self.chk_offline.isChecked():
+            self.table.setRowHidden(row, True)
 
         self.table.setSortingEnabled(True)
         if existing < 0:
@@ -597,7 +614,7 @@ class MQTTViewer(QMainWindow):
         if self._countdown_secs > 0:
             m, s = divmod(self._countdown_secs, 60)
             self.lbl_countdown.setText(
-                f"⏱  Noch {m}:{s:02d} min bis alle Anlagen gemeldet haben"
+                f"⏱  Noch {m}:{s:02d} min bis sich alle Anlagen gemeldet haben"
             )
             self.lbl_countdown.setStyleSheet(
                 "color: #b45309; background: #fef9c3; border-radius: 6px; padding: 2px 12px;"
@@ -609,6 +626,34 @@ class MQTTViewer(QMainWindow):
             self.lbl_countdown.setStyleSheet(
                 "color: #166534; background: #dcfce7; border-radius: 6px; padding: 2px 12px;"
             )
+            self._add_offline_devices()
+
+    def _add_offline_devices(self):
+        """Nach Ablauf des Timers: alle Anlagen ohne Meldung im Meldungen-Tab anzeigen."""
+        mt  = self.meldungen_tab
+        now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        for anlage in self.anlagen_tab.anlagen:
+            tech_nr = anlage["tech_nr"]
+            if tech_nr in self.anlagen_tab.disabled_devices:
+                continue
+            if self.device_status.get(tech_nr, "offline") != "offline":
+                continue
+            topic = f"offline/{tech_nr}"
+            data  = {
+                "msg_header":  {"timestamp": now},
+                "description": anlage["haltestelle"],
+                "health":      "OFFLINE",
+                "reachability": "KEINE MELDUNG",
+                "activation":  anlage.get("mvu", ""),
+                "reason":      "Keine MQTT-Meldung empfangen",
+                "usage":       {},
+            }
+            raw    = json.dumps(data, ensure_ascii=False)
+            is_new = mt._find_row(topic) < 0
+            if is_new:
+                self._shown += 1
+            mt.add_row(topic, "offline", data, raw)
+        self._update_status()
 
     def _make_connection_panel(self):
         box = QGroupBox("Broker-Verbindung")
@@ -728,9 +773,9 @@ class MQTTViewer(QMainWindow):
         # Gerätetyp-Filter
         device_type = self._device_type_from_topic(topic)
         allowed = set()
-        if mt.chk_dcu.isChecked():   allowed.add("dcu")
-        if mt.chk_du.isChecked():    allowed.add("du")
-        if mt.chk_pau.isChecked():   allowed.add("pau")
+        if mt.chk_dcu.isChecked():     allowed.add("dcu")
+        if mt.chk_du.isChecked():      allowed.add("du")
+        if mt.chk_pau.isChecked():     allowed.add("pau")
         if device_type in {"dcu", "du", "pau"}:
             if device_type not in allowed:
                 self._update_status()
