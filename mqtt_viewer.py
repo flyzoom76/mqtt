@@ -425,12 +425,11 @@ class MeldungenTab(QWidget):
 
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("Gerätetyp:"))
-        self.chk_dcu     = QCheckBox("dcu");     self.chk_dcu.setChecked(True)
-        self.chk_du      = QCheckBox("du");      self.chk_du.setChecked(True)
-        self.chk_pau     = QCheckBox("pau");     self.chk_pau.setChecked(True)
-        self.chk_offline = QCheckBox("offline"); self.chk_offline.setChecked(True)
-        self.chk_other   = QCheckBox("andere");  self.chk_other.setChecked(False)
-        for chk in (self.chk_dcu, self.chk_du, self.chk_pau, self.chk_offline, self.chk_other):
+        self.chk_dcu     = QCheckBox("Rechner");  self.chk_dcu.setChecked(True)
+        self.chk_du      = QCheckBox("Display");  self.chk_du.setChecked(True)
+        self.chk_pau     = QCheckBox("Akustik");  self.chk_pau.setChecked(True)
+        self.chk_offline = QCheckBox("offline");  self.chk_offline.setChecked(True)
+        for chk in (self.chk_dcu, self.chk_du, self.chk_pau, self.chk_offline):
             chk.stateChanged.connect(self._apply_filters)
             row2.addWidget(chk)
         row2.addStretch()
@@ -490,8 +489,8 @@ class MeldungenTab(QWidget):
         if device_type in chk_map:
             if not chk_map[device_type].isChecked():
                 return False
-        elif device_type and not self.chk_other.isChecked():
-            return False
+        elif device_type:
+            return False  # unbekannte Typen grundsätzlich ausblenden
         return True
 
     def _apply_filters(self):
@@ -790,12 +789,11 @@ class MQTTViewer(QMainWindow):
             self._update_status()
             return
 
-        # Gerätetyp: vehicle/mfd o.ä. nie in die Tabelle aufnehmen
+        # Gerätetyp: nur dcu/du/pau zulassen, alles andere verwerfen
         device_type = self._device_type_from_topic(topic)
         if device_type not in {"dcu", "du", "pau"}:
-            if not mt.chk_other.isChecked():
-                self._update_status()
-                return
+            self._update_status()
+            return
 
         # JSON parsen + Typprüfung
         try:
