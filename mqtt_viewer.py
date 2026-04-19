@@ -141,6 +141,8 @@ class MQTTWorker(QThread):
 # ---------------------------------------------------------------------------
 
 class AnlagenTab(QWidget):
+    anlagen_updated = pyqtSignal(list)
+
     def __init__(self, device_status: dict, settings: Settings):
         super().__init__()
         self.device_status = device_status
@@ -291,6 +293,7 @@ class AnlagenTab(QWidget):
             self.lbl_file.setText(f"{filename}  ✓ (gespeichert)")
             self.lbl_file.setStyleSheet("color: #1888b8;")
             self.refresh_table()
+            self.anlagen_updated.emit(self.anlagen)
 
         except Exception as e:
             QMessageBox.critical(self, "Fehler", f"Excel konnte nicht gelesen werden:\n{e}")
@@ -434,6 +437,17 @@ class MeldungenTab(QWidget):
             row2.addWidget(chk)
         row2.addStretch()
         outer.addLayout(row2)
+
+        row3 = QHBoxLayout()
+        row3.addWidget(QLabel("MVU:"))
+        self.combo_mvu_filter = QComboBox()
+        self.combo_mvu_filter.setMinimumWidth(160)
+        self.combo_mvu_filter.addItem("Alle")
+        self.combo_mvu_filter.currentTextChanged.connect(self._apply_filters)
+        row3.addWidget(self.combo_mvu_filter)
+        row3.addStretch()
+        outer.addLayout(row3)
+
         return box
 
     def _make_table(self):
@@ -471,6 +485,17 @@ class MeldungenTab(QWidget):
                 return r
         return -1
 
+    def populate_mvu_filter(self, mvus: list):
+        current = self.combo_mvu_filter.currentText()
+        self.combo_mvu_filter.blockSignals(True)
+        self.combo_mvu_filter.clear()
+        self.combo_mvu_filter.addItem("Alle")
+        for mvu in mvus:
+            self.combo_mvu_filter.addItem(mvu)
+        idx = self.combo_mvu_filter.findText(current)
+        self.combo_mvu_filter.setCurrentIndex(max(0, idx))
+        self.combo_mvu_filter.blockSignals(False)
+
     def _row_passes_filter(self, row: int) -> bool:
         type_item   = self.table.item(row, 1)
         topic_item  = self.table.item(row, 2)
@@ -491,6 +516,14 @@ class MeldungenTab(QWidget):
                 return False
         elif device_type:
             return False  # unbekannte Typen grundsätzlich ausblenden
+
+        sel_mvu = self.combo_mvu_filter.currentText()
+        if sel_mvu != "Alle":
+            col0 = self.table.item(row, 0)
+            row_mvu = col0.data(Qt.UserRole + 3) if col0 else ""
+            if row_mvu != sel_mvu:
+                return False
+
         return True
 
     def _apply_filters(self):
@@ -502,7 +535,7 @@ class MeldungenTab(QWidget):
         return sum(1 for r in range(self.table.rowCount())
                    if not self.table.isRowHidden(r))
 
-    def add_row(self, topic: str, device_type: str, data: dict, raw: str):
+    def add_row(self, topic: str, device_type: str, data: dict, raw: str, mvu: str = ""):
         self.table.setSortingEnabled(False)
         existing = self._find_row(topic)
         row = existing if existing >= 0 else self.table.rowCount()
@@ -527,6 +560,7 @@ class MeldungenTab(QWidget):
                 item.setData(Qt.UserRole,     raw)
                 item.setData(Qt.UserRole + 1, topic)
                 item.setData(Qt.UserRole + 2, device_type)
+                item.setData(Qt.UserRole + 3, mvu)
             self.table.setItem(row, col, item)
 
         if device_type == "offline":
@@ -577,6 +611,7 @@ class MQTTViewer(QMainWindow):
         self._total = 0
         self._is_connected = False
         self.device_status = {}
+        self._tech_mvu = {}
         self._countdown_secs = 0
         self._timer = QTimer()
         self._timer.setInterval(1000)
@@ -602,6 +637,9 @@ class MQTTViewer(QMainWindow):
         self.meldungen_tab.cleared.connect(self._on_meldungen_cleared)
         self.meldungen_tab.filter_changed.connect(self._update_status)
         self.anlagen_tab   = AnlagenTab(self.device_status, self.settings)
+        self.anlagen_tab.anlagen_updated.connect(self._on_anlagen_updated)
+        if self.anlagen_tab.anlagen:
+            self._on_anlagen_updated(self.anlagen_tab.anlagen)
         self.tabs.addTab(self.meldungen_tab, "Meldungen")
         self.tabs.addTab(self.anlagen_tab,   "Anlagen")
         main_layout.addWidget(self.tabs, stretch=1)
@@ -632,6 +670,11 @@ class MQTTViewer(QMainWindow):
         self._timer.stop()
         self.lbl_countdown.setText("Nicht verbunden")
         self.lbl_countdown.setStyleSheet("color: #555; background: transparent;")
+
+    def _on_anlagen_updated(self, anlagen: list):
+        self._tech_mvu = {a["tech_nr"]: a["mvu"] for a in anlagen}
+        mvus = sorted(set(a["mvu"] for a in anlagen if a["mvu"]))
+        self.meldungen_tab.populate_mvu_filter(mvus)
 
     def _tick(self):
         if self._countdown_secs > 0:
@@ -672,7 +715,7 @@ class MQTTViewer(QMainWindow):
                 "usage":       {},
             }
             raw = json.dumps(data, ensure_ascii=False)
-            mt.add_row(topic, "offline", data, raw)
+            mt.add_row(topic, "offline", data, raw, anlage.get("mvu", ""))
         self._update_status()
 
     def _make_connection_panel(self):
@@ -822,7 +865,8 @@ class MQTTViewer(QMainWindow):
 
         # Zeile hinzufügen/aktualisieren — Health + Typ-Checkboxen
         # steuern Sichtbarkeit dynamisch via setRowHidden
-        mt.add_row(topic, device_type, data, payload)
+        mvu = self._tech_mvu.get(tech_nr, "") if tech_nr else ""
+        mt.add_row(topic, device_type, data, payload, mvu)
         self._update_status()
 
     def _update_status(self):
