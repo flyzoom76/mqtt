@@ -383,7 +383,8 @@ class AnlagenTab(QWidget):
 # ---------------------------------------------------------------------------
 
 class MeldungenTab(QWidget):
-    cleared = pyqtSignal()
+    cleared        = pyqtSignal()
+    filter_changed = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -410,9 +411,11 @@ class MeldungenTab(QWidget):
         self.inp_sboid.setPlaceholderText("z.B. 100648")
         self.inp_sboid.setFixedWidth(120)
         self.inp_sboid.setToolTip("Filtert Meldungen, deren Topic diese SboId enthält.\nLeer lassen = alle Topics.")
+        self.inp_sboid.textChanged.connect(self._apply_filters)
         row1.addWidget(self.inp_sboid)
         self.chk_health = QCheckBox("Nur Fehler (HEALTH_OK ausblenden)")
         self.chk_health.setChecked(True)
+        self.chk_health.stateChanged.connect(self._apply_filters)
         row1.addWidget(self.chk_health)
         btn_clear = QPushButton("Leeren")
         btn_clear.setFixedWidth(75)
@@ -422,14 +425,14 @@ class MeldungenTab(QWidget):
 
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("Gerätetyp:"))
-        self.chk_dcu   = QCheckBox("dcu");   self.chk_dcu.setChecked(True)
-        self.chk_du    = QCheckBox("du");    self.chk_du.setChecked(True)
+        self.chk_dcu     = QCheckBox("dcu");     self.chk_dcu.setChecked(True)
+        self.chk_du      = QCheckBox("du");      self.chk_du.setChecked(True)
         self.chk_pau     = QCheckBox("pau");     self.chk_pau.setChecked(True)
         self.chk_offline = QCheckBox("offline"); self.chk_offline.setChecked(True)
         self.chk_other   = QCheckBox("andere");  self.chk_other.setChecked(False)
         for chk in (self.chk_dcu, self.chk_du, self.chk_pau, self.chk_offline, self.chk_other):
+            chk.stateChanged.connect(self._apply_filters)
             row2.addWidget(chk)
-        self.chk_offline.stateChanged.connect(self._apply_offline_filter)
         row2.addStretch()
         outer.addLayout(row2)
         return box
@@ -469,12 +472,36 @@ class MeldungenTab(QWidget):
                 return r
         return -1
 
-    def _apply_offline_filter(self):
-        show = self.chk_offline.isChecked()
-        for r in range(self.table.rowCount()):
-            item = self.table.item(r, 0)
-            if item and item.data(Qt.UserRole + 2) == "offline":
-                self.table.setRowHidden(r, not show)
+    def _row_passes_filter(self, row: int) -> bool:
+        type_item   = self.table.item(row, 1)
+        topic_item  = self.table.item(row, 2)
+        health_item = self.table.item(row, 4)
+        device_type = type_item.text()   if type_item   else ""
+        topic       = topic_item.text()  if topic_item  else ""
+        health      = health_item.text() if health_item else ""
+
+        sboid = self.inp_sboid.text().strip()
+        if sboid and sboid not in topic:
+            return False
+        if self.chk_health.isChecked() and health == "HEALTH_OK":
+            return False
+        chk_map = {"dcu": self.chk_dcu, "du": self.chk_du,
+                   "pau": self.chk_pau, "offline": self.chk_offline}
+        if device_type in chk_map:
+            if not chk_map[device_type].isChecked():
+                return False
+        elif device_type and not self.chk_other.isChecked():
+            return False
+        return True
+
+    def _apply_filters(self):
+        for row in range(self.table.rowCount()):
+            self.table.setRowHidden(row, not self._row_passes_filter(row))
+        self.filter_changed.emit()
+
+    def visible_count(self) -> int:
+        return sum(1 for r in range(self.table.rowCount())
+                   if not self.table.isRowHidden(r))
 
     def add_row(self, topic: str, device_type: str, data: dict, raw: str):
         self.table.setSortingEnabled(False)
@@ -504,7 +531,7 @@ class MeldungenTab(QWidget):
             self.table.setItem(row, col, item)
 
         if device_type == "offline":
-            color = QColor(200, 200, 200)   # grau
+            color = QColor(200, 200, 200)
         elif health in ("HEALTH_OK", ""):
             color = QColor(255, 255, 200)
         elif "WARN" in health or "DEGRADED" in health:
@@ -514,12 +541,9 @@ class MeldungenTab(QWidget):
         for col in range(self.table.columnCount()):
             self.table.item(row, col).setBackground(color)
 
-        # offline-Filter direkt anwenden
-        if device_type == "offline" and not self.chk_offline.isChecked():
-            self.table.setRowHidden(row, True)
-
+        self.table.setRowHidden(row, not self._row_passes_filter(row))
         self.table.setSortingEnabled(True)
-        if existing < 0:
+        if existing < 0 and not self.table.isRowHidden(row):
             self.table.scrollToBottom()
 
     def clear_table(self):
@@ -552,7 +576,6 @@ class MQTTViewer(QMainWindow):
         self.worker.message_received.connect(self.handle_message)
         self.worker.connection_changed.connect(self.handle_connection)
         self._total = 0
-        self._shown = 0
         self._is_connected = False
         self.device_status = {}
         self._countdown_secs = 0
@@ -578,6 +601,7 @@ class MQTTViewer(QMainWindow):
         self.tabs = QTabWidget()
         self.meldungen_tab = MeldungenTab()
         self.meldungen_tab.cleared.connect(self._on_meldungen_cleared)
+        self.meldungen_tab.filter_changed.connect(self._update_status)
         self.anlagen_tab   = AnlagenTab(self.device_status, self.settings)
         self.tabs.addTab(self.meldungen_tab, "Meldungen")
         self.tabs.addTab(self.anlagen_tab,   "Anlagen")
@@ -723,7 +747,6 @@ class MQTTViewer(QMainWindow):
             self.worker.disconnect_broker()
 
     def _on_meldungen_cleared(self):
-        self._shown = 0
         self._update_status()
 
     def handle_connection(self, connected: bool, message: str):
@@ -733,7 +756,6 @@ class MQTTViewer(QMainWindow):
             # Liste und Zähler beim Verbinden zurücksetzen
             self.meldungen_tab.clear_table()
             self._total = 0
-            self._shown = 0
             self.btn_connect.setText("Trennen")
             self._start_countdown()
         else:
@@ -762,27 +784,6 @@ class MQTTViewer(QMainWindow):
 
     def handle_message(self, topic: str, payload: str):
         self._total += 1
-        mt = self.meldungen_tab
-
-        # SboId-Filter
-        sboid = mt.inp_sboid.text().strip()
-        if sboid and sboid not in topic:
-            self._update_status()
-            return
-
-        # Gerätetyp-Filter
-        device_type = self._device_type_from_topic(topic)
-        allowed = set()
-        if mt.chk_dcu.isChecked():     allowed.add("dcu")
-        if mt.chk_du.isChecked():      allowed.add("du")
-        if mt.chk_pau.isChecked():     allowed.add("pau")
-        if device_type in {"dcu", "du", "pau"}:
-            if device_type not in allowed:
-                self._update_status()
-                return
-        elif not mt.chk_other.isChecked():
-            self._update_status()
-            return
 
         # JSON parsen
         try:
@@ -791,8 +792,9 @@ class MQTTViewer(QMainWindow):
             self._update_status()
             return
 
-        health   = data.get("health", "")
-        tech_nr  = self._tech_nr_from_topic(topic)
+        health      = data.get("health", "")
+        device_type = self._device_type_from_topic(topic)
+        tech_nr     = self._tech_nr_from_topic(topic)
 
         # Deaktivierte Anlage → komplett ignorieren
         if tech_nr and tech_nr in self.anlagen_tab.disabled_devices:
@@ -806,20 +808,14 @@ class MQTTViewer(QMainWindow):
                 self.device_status[tech_nr] = new_status
                 self.anlagen_tab.update_lamps()
 
-        # Health-Filter für Meldungs-Tab
-        if mt.chk_health.isChecked() and health == "HEALTH_OK":
-            self._update_status()
-            return
-
-        is_new = mt._find_row(topic) < 0
-        if is_new:
-            self._shown += 1
-        mt.add_row(topic, device_type, data, payload)
+        # Zur Tabelle hinzufügen/aktualisieren — Filter steuern Sichtbarkeit
+        self.meldungen_tab.add_row(topic, device_type, data, payload)
         self._update_status()
 
     def _update_status(self):
-        state = "Verbunden" if self._is_connected else "Getrennt"
-        self.statusBar().showMessage(f"{state}  |  Empfangen: {self._total}  |  Angezeigt: {self._shown}")
+        state   = "Verbunden" if self._is_connected else "Getrennt"
+        visible = self.meldungen_tab.visible_count()
+        self.statusBar().showMessage(f"{state}  |  Empfangen: {self._total}  |  Angezeigt: {visible}")
 
     def closeEvent(self, event):
         self.worker.disconnect_broker()
