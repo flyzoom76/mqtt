@@ -672,10 +672,7 @@ class MQTTViewer(QMainWindow):
                 "reason":      "Keine MQTT-Meldung empfangen",
                 "usage":       {},
             }
-            raw    = json.dumps(data, ensure_ascii=False)
-            is_new = mt._find_row(topic) < 0
-            if is_new:
-                self._shown += 1
+            raw = json.dumps(data, ensure_ascii=False)
             mt.add_row(topic, "offline", data, raw)
         self._update_status()
 
@@ -822,7 +819,30 @@ class MQTTViewer(QMainWindow):
         event.accept()
 
 
+def _exception_hook(exc_type, exc_value, exc_tb):
+    import traceback
+    text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    # Log-Datei neben der EXE schreiben
+    try:
+        base = os.path.dirname(sys.executable if getattr(sys, "frozen", False)
+                               else os.path.abspath(__file__))
+        with open(os.path.join(base, "crash_log.txt"), "w", encoding="utf-8") as f:
+            f.write(text)
+    except Exception:
+        pass
+    # Lesbarer Fehlerdialog statt Windows-Crash-Meldung
+    from PyQt5.QtWidgets import QMessageBox
+    box = QMessageBox()
+    box.setIcon(QMessageBox.Critical)
+    box.setWindowTitle("VBZ MQTT Live – Fehler")
+    box.setText("Ein unerwarteter Fehler ist aufgetreten.\n\nDetails im Bereich unten oder in crash_log.txt.")
+    box.setDetailedText(text)
+    box.exec_()
+    sys.exit(1)
+
+
 def main():
+    sys.excepthook = _exception_hook
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName("VBZ MQTT Live")
