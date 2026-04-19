@@ -789,6 +789,10 @@ class MQTTViewer(QMainWindow):
             self._update_status()
             return
 
+        if not isinstance(data, dict):
+            self._update_status()
+            return
+
         health      = data.get("health", "")
         device_type = self._device_type_from_topic(topic)
         tech_nr     = self._tech_nr_from_topic(topic)
