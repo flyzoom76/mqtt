@@ -438,10 +438,11 @@ class AnlagenTab(QWidget):
         self.lbl_count.setText(f"{len(filtered)} Anlagen")
 
     def update_lamps(self):
-        selected = self.combo_mvu.currentText()
-        filtered = [a for a in self.anlagen if selected == "Alle" or a["mvu"] == selected]
-        for row, anlage in enumerate(filtered):
-            status = self.device_status.get(anlage["tech_nr"], "offline")
+        for row in range(self.table.rowCount()):
+            tech_item = self.table.item(row, 3)
+            if not tech_item:
+                continue
+            status = self.device_status.get(tech_item.text(), "offline")
             self.table.setCellWidget(row, 0, make_lamp(status))
 
 
