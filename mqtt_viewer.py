@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """VBZ MQTT Live - Meldungsanzeige + Anlagen-Übersicht mit Excel-Import"""
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 import sys
 import json
@@ -65,6 +65,47 @@ def create_vbz_icon() -> QIcon:
     p.drawText(QRect(0, 0, size, size), Qt.AlignCenter, "VBZ")
     p.end()
     return QIcon(px)
+
+
+def show_info_dialog(parent=None):
+    from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("Info – VBZ MQTT Live")
+    dlg.setWindowIcon(create_vbz_icon())
+    dlg.setMinimumWidth(420)
+    lay = QVBoxLayout(dlg)
+    lay.setSpacing(10)
+
+    title = QLabel(f"<b>VBZ MQTT Live</b>  v{__version__}")
+    title.setFont(QFont("Arial", 14, QFont.Bold))
+    title.setAlignment(Qt.AlignCenter)
+    lay.addWidget(title)
+
+    info = QLabel(
+        "<b>Ersteller:</b> Daniel Schwander<br>"
+        "<b>Copyright:</b> © 2026 Daniel Schwander. Alle Rechte vorbehalten.<br><br>"
+        "<b>Nutzungsbestimmungen:</b><br>"
+        "Dieses Programm ist ausschliesslich für den internen Gebrauch durch autorisierte "
+        "Mitarbeitende der VBZ bestimmt. Eine Weitergabe, Vervielfältigung oder Nutzung "
+        "ausserhalb dieses Rahmens ist ohne schriftliche Genehmigung des Erstellers nicht "
+        "gestattet. Die Nutzung erfolgt ohne Gewährleistung – der Ersteller übernimmt keine "
+        "Haftung für allfällige Fehler oder Datenverluste."
+    )
+    info.setWordWrap(True)
+    info.setTextFormat(Qt.RichText)
+    lay.addWidget(info)
+
+    btn_ok = QPushButton("OK")
+    btn_ok.setFixedWidth(80)
+    btn_ok.clicked.connect(dlg.accept)
+    btn_ok.setDefault(True)
+    from PyQt5.QtWidgets import QHBoxLayout as _HBox
+    hbox = _HBox()
+    hbox.addStretch()
+    hbox.addWidget(btn_ok)
+    lay.addLayout(hbox)
+
+    dlg.exec_()
 
 
 def make_lamp(status: str) -> QLabel:
@@ -201,15 +242,23 @@ class AnlagenTab(QWidget):
         self.inp_search_halt.textChanged.connect(self.refresh_table)
         toolbar.addWidget(self.inp_search_halt)
 
-        toolbar.addSpacing(20)
-        self.chk_only_disabled = QCheckBox("Nur deaktivierte")
-        self.chk_only_disabled.stateChanged.connect(self.refresh_table)
-        toolbar.addWidget(self.chk_only_disabled)
-
         toolbar.addStretch()
         self.lbl_count = QLabel("")
         toolbar.addWidget(self.lbl_count)
         layout.addLayout(toolbar)
+
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("Anzeigen:"))
+        self.chk_only_disabled   = QCheckBox("Nur deaktivierte")
+        self.chk_status_ok       = QCheckBox("Health OK")
+        self.chk_status_error    = QCheckBox("Health Fehler")
+        self.chk_status_offline  = QCheckBox("Keine Meldung")
+        for chk in (self.chk_only_disabled, self.chk_status_ok,
+                    self.chk_status_error, self.chk_status_offline):
+            chk.stateChanged.connect(self.refresh_table)
+            filter_row.addWidget(chk)
+        filter_row.addStretch()
+        layout.addLayout(filter_row)
 
         self.table = QTableWidget()
         self.table.setColumnCount(5)
@@ -347,12 +396,18 @@ class AnlagenTab(QWidget):
         halt_query = self.inp_search_halt.text().strip().lower()
 
         only_disabled = self.chk_only_disabled.isChecked()
+        status_filter = set()
+        if self.chk_status_ok.isChecked():      status_filter.add("ok")
+        if self.chk_status_error.isChecked():   status_filter.add("error")
+        if self.chk_status_offline.isChecked(): status_filter.add("offline")
+
         filtered = [
             a for a in self.anlagen
             if (selected == "Alle" or a["mvu"] == selected)
             and (not tech_query or tech_query in a["tech_nr"].lower())
             and (not halt_query or halt_query in a["haltestelle"].lower())
             and (not only_disabled or a["tech_nr"] in self.disabled_devices)
+            and (not status_filter or self.device_status.get(a["tech_nr"], "offline") in status_filter)
         ]
 
         self.table.setSortingEnabled(False)
@@ -819,6 +874,13 @@ class MQTTViewer(QMainWindow):
         self.btn_connect.setFixedWidth(110)
         self.btn_connect.clicked.connect(self._toggle_connection)
         row.addWidget(self.btn_connect)
+
+        row.addStretch()
+        btn_info = QPushButton("ℹ  Info")
+        btn_info.setFixedWidth(70)
+        btn_info.setFlat(True)
+        btn_info.clicked.connect(lambda: show_info_dialog(self))
+        row.addWidget(btn_info)
 
         return box
 
