@@ -261,8 +261,10 @@ class AnlagenTab(QWidget):
         layout.addLayout(filter_row)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Status", "Aktiv", "MVU", "Tech Nr", "Haltestelle"])
+        self.table.setColumnCount(8)
+        self.table.setHorizontalHeaderLabels(
+            ["Status", "Aktiv", "MVU", "Tech Nr", "Haltestelle", "Datenkanal", "Analog", "LTE"]
+        )
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(4, QHeaderView.Stretch)
@@ -300,13 +302,17 @@ class AnlagenTab(QWidget):
             ws = wb.active
 
             col_mvu = col_tech = col_halt = None
+            col_datenkanal = col_analog = col_lte = None
             header_row = 0
             for i, row in enumerate(ws.iter_rows(values_only=True)):
                 cells = [str(c).strip().lower() if c is not None else "" for c in row]
                 if "mvu" in cells:
-                    col_mvu  = cells.index("mvu")
-                    col_tech = next((j for j, c in enumerate(cells) if "tech" in c), None)
-                    col_halt = next((j for j, c in enumerate(cells) if "halt" in c), None)
+                    col_mvu       = cells.index("mvu")
+                    col_tech      = next((j for j, c in enumerate(cells) if "tech" in c), None)
+                    col_halt      = next((j for j, c in enumerate(cells) if "halt" in c), None)
+                    col_datenkanal = next((j for j, c in enumerate(cells) if "daten" in c or "kanal" in c), None)
+                    col_analog    = next((j for j, c in enumerate(cells) if c == "analog" or "analog" in c), None)
+                    col_lte       = next((j for j, c in enumerate(cells) if c == "lte" or c.startswith("lte")), None)
                     header_row = i + 1
                     break
             if col_mvu is None:
@@ -332,9 +338,12 @@ class AnlagenTab(QWidget):
                     continue
 
                 self.anlagen.append({
-                    "mvu":        mvu_str,
-                    "tech_nr":    tech_str,
+                    "mvu":         mvu_str,
+                    "tech_nr":     tech_str,
                     "haltestelle": str(halt_val).strip() if halt_val else "",
+                    "datenkanal":  str(cell(col_datenkanal)).strip() if cell(col_datenkanal) is not None else "",
+                    "analog":      str(cell(col_analog)).strip()     if cell(col_analog)     is not None else "",
+                    "lte":         str(cell(col_lte)).strip()        if cell(col_lte)        is not None else "",
                 })
 
             self._populate_mvu_filter()
@@ -425,8 +434,8 @@ class AnlagenTab(QWidget):
             font.setStrikeOut(disabled)
             color = QColor(180, 180, 180) if disabled else QColor(0, 0, 0)
 
-            for col, key in enumerate(["mvu", "tech_nr", "haltestelle"], start=2):
-                item = QTableWidgetItem(anlage[key])
+            for col, key in enumerate(["mvu", "tech_nr", "haltestelle", "datenkanal", "analog", "lte"], start=2):
+                item = QTableWidgetItem(anlage.get(key, ""))
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 item.setFont(font)
                 item.setForeground(color)
