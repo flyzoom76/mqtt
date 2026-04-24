@@ -329,7 +329,8 @@ class AnlagenTab(QWidget):
                     col_halt       = find_col(cells, "haltestelle", "halt")
                     col_datenkanal = find_col(cells, "datenkanal", "daten kanal", "daten-kanal", "kanal", "daten")
                     col_analog     = find_col(cells, "analog")
-                    col_lte        = find_col(cells, "lte")
+                    col_lte        = next((j for j, c in enumerate(cells)
+                                           if c == "lte" or c.startswith("lte ") or c.startswith("lte-")), None)
                     header_row = i + 1
                     break
             if col_mvu is None:
