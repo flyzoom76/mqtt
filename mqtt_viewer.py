@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """VBZ MQTT Live - Meldungsanzeige + Anlagen-Übersicht mit Excel-Import"""
 
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 
 import sys
 import json
@@ -192,6 +192,7 @@ class AnlagenTab(QWidget):
 
         # Deaktivierte Anlagen laden
         self.disabled_devices: set = set(self.settings.value("disabled_devices", []))
+        self._bemerkungen: dict = self.settings.value("bemerkungen", {})
 
         self._setup_ui()
 
@@ -261,18 +262,33 @@ class AnlagenTab(QWidget):
         layout.addLayout(filter_row)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(8)
+        self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels(
-            ["Status", "Aktiv", "MVU", "Tech Nr", "Haltestelle", "Datenkanal", "Analog", "LTE"]
+            ["Status", "Aktiv", "MVU", "Tech Nr", "Haltestelle", "Bemerkungen", "Datenkanal", "Analog", "LTE"]
         )
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(4, QHeaderView.Stretch)
+        hh.setSectionResizeMode(5, QHeaderView.Fixed)
+        self.table.setColumnWidth(5, 200)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSortingEnabled(True)
         layout.addWidget(self.table)
+
+    def _make_bemerkung_widget(self, tech_nr: str) -> QLineEdit:
+        line = QLineEdit()
+        line.setMaxLength(30)
+        line.setPlaceholderText("…")
+        line.setFrame(False)
+        line.setText(self._bemerkungen.get(tech_nr, ""))
+        line.textChanged.connect(lambda text, t=tech_nr: self._on_bemerkung_changed(t, text))
+        return line
+
+    def _on_bemerkung_changed(self, tech_nr: str, text: str):
+        self._bemerkungen[tech_nr] = text
+        self.settings.setValue("bemerkungen", self._bemerkungen)
 
     def _populate_mvu_filter(self):
         mvus = sorted(set(a["mvu"] for a in self.anlagen if a["mvu"]))
@@ -446,13 +462,22 @@ class AnlagenTab(QWidget):
             font.setStrikeOut(disabled)
             color = QColor(180, 180, 180) if disabled else QColor(0, 0, 0)
 
-            for col, key in enumerate(["mvu", "tech_nr", "haltestelle", "datenkanal", "analog", "lte"], start=2):
+            for col, key in enumerate(["mvu", "tech_nr", "haltestelle"], start=2):
                 item = QTableWidgetItem(anlage.get(key, ""))
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 item.setFont(font)
                 item.setForeground(color)
                 if key == "tech_nr":
                     item.setData(Qt.UserRole, int(anlage[key]))
+                self.table.setItem(row, col, item)
+
+            self.table.setCellWidget(row, 5, self._make_bemerkung_widget(anlage["tech_nr"]))
+
+            for col, key in enumerate(["datenkanal", "analog", "lte"], start=6):
+                item = QTableWidgetItem(anlage.get(key, ""))
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setFont(font)
+                item.setForeground(color)
                 self.table.setItem(row, col, item)
 
         self.table.setSortingEnabled(True)
