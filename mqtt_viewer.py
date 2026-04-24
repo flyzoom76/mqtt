@@ -1013,6 +1013,11 @@ class MQTTViewer(QMainWindow):
                 self.device_status[tech_nr] = new_status
                 self.anlagen_tab.update_lamps()
 
+            # Offline-Zeile entfernen falls Gerät sich wieder meldet
+            offline_row = mt._find_row(f"offline/{tech_nr}")
+            if offline_row >= 0:
+                mt.table.removeRow(offline_row)
+
         # Zeile hinzufügen/aktualisieren — Health + Typ-Checkboxen
         # steuern Sichtbarkeit dynamisch via setRowHidden
         mvu = self._tech_mvu.get(tech_nr, "") if tech_nr else ""
