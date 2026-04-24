@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """VBZ MQTT Live - Meldungsanzeige + Anlagen-Übersicht mit Excel-Import"""
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 import sys
 import json
@@ -301,18 +301,35 @@ class AnlagenTab(QWidget):
             wb = openpyxl.load_workbook(path, data_only=True)
             ws = wb.active
 
+            def find_col(headers, *keywords):
+                for j, h in enumerate(headers):
+                    if any(kw in h for kw in keywords):
+                        return j
+                return None
+
+            def cell_val(row, idx):
+                if idx is None or idx >= len(row):
+                    return ""
+                v = row[idx]
+                if v is None:
+                    return ""
+                s = str(v).strip()
+                if s.endswith(".0") and s[:-2].lstrip("-").isdigit():
+                    s = s[:-2]
+                return s
+
             col_mvu = col_tech = col_halt = None
             col_datenkanal = col_analog = col_lte = None
             header_row = 0
             for i, row in enumerate(ws.iter_rows(values_only=True)):
                 cells = [str(c).strip().lower() if c is not None else "" for c in row]
                 if "mvu" in cells:
-                    col_mvu       = cells.index("mvu")
-                    col_tech      = next((j for j, c in enumerate(cells) if "tech" in c), None)
-                    col_halt      = next((j for j, c in enumerate(cells) if "halt" in c), None)
-                    col_datenkanal = next((j for j, c in enumerate(cells) if "daten" in c or "kanal" in c), None)
-                    col_analog    = next((j for j, c in enumerate(cells) if c == "analog" or "analog" in c), None)
-                    col_lte       = next((j for j, c in enumerate(cells) if c == "lte" or c.startswith("lte")), None)
+                    col_mvu        = cells.index("mvu")
+                    col_tech       = find_col(cells, "tech nr", "tech.nr", "tech_nr", "technr", "tech")
+                    col_halt       = find_col(cells, "haltestelle", "halt")
+                    col_datenkanal = find_col(cells, "datenkanal", "daten kanal", "daten-kanal", "kanal", "daten")
+                    col_analog     = find_col(cells, "analog")
+                    col_lte        = find_col(cells, "lte")
                     header_row = i + 1
                     break
             if col_mvu is None:
@@ -321,29 +338,23 @@ class AnlagenTab(QWidget):
 
             self.anlagen = []
             for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
-                def cell(idx):
-                    return row[idx] if idx is not None and idx < len(row) else None
-
-                mvu_val  = cell(col_mvu)
-                tech_val = cell(col_tech)
-                halt_val = cell(col_halt)
-
-                if tech_val is None:
+                tech_val = cell_val(row, col_tech)
+                if not tech_val:
                     continue
-                tech_str = str(tech_val).strip().split(".")[0]
+                tech_str = tech_val.split(".")[0]
                 if not tech_str.isdigit():
                     continue
-                mvu_str = str(mvu_val).strip() if mvu_val else ""
+                mvu_str = cell_val(row, col_mvu)
                 if "total" in mvu_str.lower():
                     continue
 
                 self.anlagen.append({
                     "mvu":         mvu_str,
                     "tech_nr":     tech_str,
-                    "haltestelle": str(halt_val).strip() if halt_val else "",
-                    "datenkanal":  str(cell(col_datenkanal)).strip() if cell(col_datenkanal) is not None else "",
-                    "analog":      str(cell(col_analog)).strip()     if cell(col_analog)     is not None else "",
-                    "lte":         str(cell(col_lte)).strip()        if cell(col_lte)        is not None else "",
+                    "haltestelle": cell_val(row, col_halt),
+                    "datenkanal":  cell_val(row, col_datenkanal),
+                    "analog":      cell_val(row, col_analog),
+                    "lte":         cell_val(row, col_lte),
                 })
 
             self._populate_mvu_filter()
