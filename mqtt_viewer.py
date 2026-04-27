@@ -265,7 +265,7 @@ class AnlagenTab(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels([
-            "Status", "Updatet alle min", "Aktiv", "MVU", "Tech Nr",
+            "Status", "Interval", "Aktiv", "MVU", "Tech Nr",
             "Haltestelle", "Bemerkungen", "Datenkanal", "Analog", "LTE"
         ])
         hh = self.table.horizontalHeader()
