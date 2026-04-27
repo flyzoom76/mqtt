@@ -493,10 +493,10 @@ class AnlagenTab(QWidget):
         self.lbl_count.setText(f"{len(filtered)} Anlagen")
 
     def _interval_text(self, tech_nr: str) -> str:
-        mins = self.update_interval.get(tech_nr)
-        if mins is None:
+        secs = self.update_interval.get(tech_nr)
+        if secs is None:
             return "–"
-        return f"{round(mins)} min"
+        return f"{round(secs)} sek"
 
     def update_lamps(self):
         for row in range(self.table.rowCount()):
@@ -1065,7 +1065,7 @@ class MQTTViewer(QMainWindow):
             now = datetime.now()
             if tech_nr in self.last_seen:
                 secs = (now - self.last_seen[tech_nr]).total_seconds()
-                self.update_interval[tech_nr] = secs / 60
+                self.update_interval[tech_nr] = secs
             self.last_seen[tech_nr] = now
             new_status = "ok" if health == "HEALTH_OK" else "error"
             if self.device_status.get(tech_nr) != new_status:
