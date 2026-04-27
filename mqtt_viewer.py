@@ -1065,7 +1065,8 @@ class MQTTViewer(QMainWindow):
             now = datetime.now()
             if tech_nr in self.last_seen:
                 secs = (now - self.last_seen[tech_nr]).total_seconds()
-                self.update_interval[tech_nr] = secs
+                if secs >= 10:  # Burst-Nachrichten ignorieren, nur echte Pausen speichern
+                    self.update_interval[tech_nr] = secs
             self.last_seen[tech_nr] = now
             new_status = "ok" if health == "HEALTH_OK" else "error"
             if self.device_status.get(tech_nr) != new_status:
