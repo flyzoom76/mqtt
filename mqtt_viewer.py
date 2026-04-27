@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
     QSpinBox, QMessageBox, QAbstractItemView, QTabWidget, QComboBox,
     QFileDialog
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QTimer
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QTimer, QEvent
 from PyQt5.QtGui import QColor, QFont, QIcon, QPixmap, QPainter
 import paho.mqtt.client as mqtt
 
@@ -813,6 +813,11 @@ class MQTTViewer(QMainWindow):
         self._ls_timer.setInterval(60_000)
         self._ls_timer.timeout.connect(lambda: self.anlagen_tab.update_last_seen_col())
         self._ls_timer.start()
+        self._inactivity_timer = QTimer(singleShot=True)
+        self._inactivity_timer.setInterval(15 * 60 * 1000)
+        self._inactivity_timer.timeout.connect(self.close)
+        self._inactivity_timer.start()
+        QApplication.instance().installEventFilter(self)
         self._setup_ui()
         self._load_settings()
 
@@ -1089,6 +1094,12 @@ class MQTTViewer(QMainWindow):
         state   = "Verbunden" if self._is_connected else "Getrennt"
         visible = self.meldungen_tab.visible_count()
         self.statusBar().showMessage(f"{state}  |  Empfangen: {self._total}  |  Angezeigt: {visible}")
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress,
+                            QEvent.KeyPress, QEvent.Wheel):
+            self._inactivity_timer.start()
+        return super().eventFilter(obj, event)
 
     def closeEvent(self, event):
         self.worker.disconnect_broker()
