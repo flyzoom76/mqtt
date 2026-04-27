@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """VBZ MQTT Live - Meldungsanzeige + Anlagen-Übersicht mit Excel-Import"""
 
-__version__ = "1.0.5"
+__version__ = "1.0.51"
 
 import sys
 import json
@@ -184,9 +184,10 @@ class MQTTWorker(QThread):
 class AnlagenTab(QWidget):
     anlagen_updated = pyqtSignal(list)
 
-    def __init__(self, device_status: dict, settings: Settings):
+    def __init__(self, device_status: dict, last_seen: dict, settings: Settings):
         super().__init__()
         self.device_status = device_status
+        self.last_seen = last_seen
         self.settings = settings
         self.anlagen = []
 
@@ -262,15 +263,16 @@ class AnlagenTab(QWidget):
         layout.addLayout(filter_row)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(9)
-        self.table.setHorizontalHeaderLabels(
-            ["Status", "Aktiv", "MVU", "Tech Nr", "Haltestelle", "Bemerkungen", "Datenkanal", "Analog", "LTE"]
-        )
+        self.table.setColumnCount(10)
+        self.table.setHorizontalHeaderLabels([
+            "Status", "Letzte Meldung", "Aktiv", "MVU", "Tech Nr",
+            "Haltestelle", "Bemerkungen", "Datenkanal", "Analog", "LTE"
+        ])
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(4, QHeaderView.Stretch)
-        hh.setSectionResizeMode(5, QHeaderView.Fixed)
-        self.table.setColumnWidth(5, 200)
+        hh.setSectionResizeMode(5, QHeaderView.Stretch)
+        hh.setSectionResizeMode(6, QHeaderView.Fixed)
+        self.table.setColumnWidth(6, 200)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -413,7 +415,7 @@ class AnlagenTab(QWidget):
     def _apply_strikethrough(self):
         """Durchstreichen aller deaktivierten Zeilen ohne Tabelle neu aufzubauen."""
         for row in range(self.table.rowCount()):
-            tech_item = self.table.item(row, 3)  # Tech Nr Spalte
+            tech_item = self.table.item(row, 4)  # Tech Nr Spalte
             if not tech_item:
                 continue
             tech_nr = tech_item.text()
@@ -453,16 +455,23 @@ class AnlagenTab(QWidget):
             row = self.table.rowCount()
             self.table.insertRow(row)
 
-            status = self.device_status.get(anlage["tech_nr"], "offline")
+            tech_nr = anlage["tech_nr"]
+            status = self.device_status.get(tech_nr, "offline")
             self.table.setCellWidget(row, 0, make_lamp(status))
-            self.table.setCellWidget(row, 1, self._make_active_checkbox(anlage["tech_nr"]))
 
-            disabled = anlage["tech_nr"] in self.disabled_devices
+            lm_item = QTableWidgetItem(self._last_seen_text(tech_nr))
+            lm_item.setFlags(lm_item.flags() & ~Qt.ItemIsEditable)
+            lm_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 1, lm_item)
+
+            self.table.setCellWidget(row, 2, self._make_active_checkbox(tech_nr))
+
+            disabled = tech_nr in self.disabled_devices
             font = QFont()
             font.setStrikeOut(disabled)
             color = QColor(180, 180, 180) if disabled else QColor(0, 0, 0)
 
-            for col, key in enumerate(["mvu", "tech_nr", "haltestelle"], start=2):
+            for col, key in enumerate(["mvu", "tech_nr", "haltestelle"], start=3):
                 item = QTableWidgetItem(anlage.get(key, ""))
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 item.setFont(font)
@@ -471,9 +480,9 @@ class AnlagenTab(QWidget):
                     item.setData(Qt.UserRole, int(anlage[key]))
                 self.table.setItem(row, col, item)
 
-            self.table.setCellWidget(row, 5, self._make_bemerkung_widget(anlage["tech_nr"]))
+            self.table.setCellWidget(row, 6, self._make_bemerkung_widget(tech_nr))
 
-            for col, key in enumerate(["datenkanal", "analog", "lte"], start=6):
+            for col, key in enumerate(["datenkanal", "analog", "lte"], start=7):
                 item = QTableWidgetItem(anlage.get(key, ""))
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 item.setFont(font)
@@ -483,13 +492,28 @@ class AnlagenTab(QWidget):
         self.table.setSortingEnabled(True)
         self.lbl_count.setText(f"{len(filtered)} Anlagen")
 
+    def _last_seen_text(self, tech_nr: str) -> str:
+        ts = self.last_seen.get(tech_nr)
+        if ts is None:
+            return "–"
+        mins = int((datetime.now() - ts).total_seconds() // 60)
+        return f"{mins} min"
+
     def update_lamps(self):
         for row in range(self.table.rowCount()):
-            tech_item = self.table.item(row, 3)
+            tech_item = self.table.item(row, 4)  # Tech Nr
             if not tech_item:
                 continue
-            status = self.device_status.get(tech_item.text(), "offline")
+            tech_nr = tech_item.text()
+            status = self.device_status.get(tech_nr, "offline")
             self.table.setCellWidget(row, 0, make_lamp(status))
+
+    def update_last_seen_col(self):
+        for row in range(self.table.rowCount()):
+            tech_item = self.table.item(row, 4)  # Tech Nr
+            lm_item   = self.table.item(row, 1)  # Letzte Meldung
+            if tech_item and lm_item:
+                lm_item.setText(self._last_seen_text(tech_item.text()))
 
 
 # ---------------------------------------------------------------------------
@@ -779,11 +803,16 @@ class MQTTViewer(QMainWindow):
         self._total = 0
         self._is_connected = False
         self.device_status = {}
+        self.last_seen = {}
         self._tech_mvu = {}
         self._countdown_secs = 0
         self._timer = QTimer()
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._tick)
+        self._ls_timer = QTimer()
+        self._ls_timer.setInterval(60_000)
+        self._ls_timer.timeout.connect(lambda: self.anlagen_tab.update_last_seen_col())
+        self._ls_timer.start()
         self._setup_ui()
         self._load_settings()
 
@@ -804,7 +833,7 @@ class MQTTViewer(QMainWindow):
         self.meldungen_tab = MeldungenTab()
         self.meldungen_tab.cleared.connect(self._on_meldungen_cleared)
         self.meldungen_tab.filter_changed.connect(self._update_status)
-        self.anlagen_tab   = AnlagenTab(self.device_status, self.settings)
+        self.anlagen_tab   = AnlagenTab(self.device_status, self.last_seen, self.settings)
         self.anlagen_tab.anlagen_updated.connect(self._on_anlagen_updated)
         if self.anlagen_tab.anlagen:
             self._on_anlagen_updated(self.anlagen_tab.anlagen)
@@ -1031,12 +1060,14 @@ class MQTTViewer(QMainWindow):
             self._update_status()
             return
 
-        # Anlagen-Status aktualisieren
+        # Anlagen-Status + letzte Meldung aktualisieren
         if tech_nr:
+            self.last_seen[tech_nr] = datetime.now()
             new_status = "ok" if health == "HEALTH_OK" else "error"
             if self.device_status.get(tech_nr) != new_status:
                 self.device_status[tech_nr] = new_status
                 self.anlagen_tab.update_lamps()
+            self.anlagen_tab.update_last_seen_col()
 
             # Offline-Zeile entfernen falls Gerät sich wieder meldet
             offline_row = mt._find_row(f"offline/{tech_nr}")
