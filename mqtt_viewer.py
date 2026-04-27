@@ -184,10 +184,10 @@ class MQTTWorker(QThread):
 class AnlagenTab(QWidget):
     anlagen_updated = pyqtSignal(list)
 
-    def __init__(self, device_status: dict, last_seen: dict, settings: Settings):
+    def __init__(self, device_status: dict, update_interval: dict, settings: Settings):
         super().__init__()
         self.device_status = device_status
-        self.last_seen = last_seen
+        self.update_interval = update_interval
         self.settings = settings
         self.anlagen = []
 
@@ -265,7 +265,7 @@ class AnlagenTab(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels([
-            "Status", "Letzte Meldung", "Aktiv", "MVU", "Tech Nr",
+            "Status", "Interval", "Aktiv", "MVU", "Tech Nr",
             "Haltestelle", "Bemerkungen", "Datenkanal", "Analog", "LTE"
         ])
         hh = self.table.horizontalHeader()
@@ -459,7 +459,7 @@ class AnlagenTab(QWidget):
             status = self.device_status.get(tech_nr, "offline")
             self.table.setCellWidget(row, 0, make_lamp(status))
 
-            lm_item = QTableWidgetItem(self._last_seen_text(tech_nr))
+            lm_item = QTableWidgetItem(self._interval_text(tech_nr))
             lm_item.setFlags(lm_item.flags() & ~Qt.ItemIsEditable)
             lm_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 1, lm_item)
@@ -492,12 +492,11 @@ class AnlagenTab(QWidget):
         self.table.setSortingEnabled(True)
         self.lbl_count.setText(f"{len(filtered)} Anlagen")
 
-    def _last_seen_text(self, tech_nr: str) -> str:
-        ts = self.last_seen.get(tech_nr)
-        if ts is None:
+    def _interval_text(self, tech_nr: str) -> str:
+        mins = self.update_interval.get(tech_nr)
+        if mins is None:
             return "–"
-        mins = int((datetime.now() - ts).total_seconds() // 60)
-        return f"{mins} min"
+        return f"{round(mins)} min"
 
     def update_lamps(self):
         for row in range(self.table.rowCount()):
@@ -513,7 +512,7 @@ class AnlagenTab(QWidget):
             tech_item = self.table.item(row, 4)  # Tech Nr
             lm_item   = self.table.item(row, 1)  # Letzte Meldung
             if tech_item and lm_item:
-                lm_item.setText(self._last_seen_text(tech_item.text()))
+                lm_item.setText(self._interval_text(tech_item.text()))
 
 
 # ---------------------------------------------------------------------------
@@ -804,6 +803,7 @@ class MQTTViewer(QMainWindow):
         self._is_connected = False
         self.device_status = {}
         self.last_seen = {}
+        self.update_interval = {}
         self._tech_mvu = {}
         self._countdown_secs = 0
         self._timer = QTimer()
@@ -833,7 +833,7 @@ class MQTTViewer(QMainWindow):
         self.meldungen_tab = MeldungenTab()
         self.meldungen_tab.cleared.connect(self._on_meldungen_cleared)
         self.meldungen_tab.filter_changed.connect(self._update_status)
-        self.anlagen_tab   = AnlagenTab(self.device_status, self.last_seen, self.settings)
+        self.anlagen_tab   = AnlagenTab(self.device_status, self.update_interval, self.settings)
         self.anlagen_tab.anlagen_updated.connect(self._on_anlagen_updated)
         if self.anlagen_tab.anlagen:
             self._on_anlagen_updated(self.anlagen_tab.anlagen)
@@ -1060,9 +1060,13 @@ class MQTTViewer(QMainWindow):
             self._update_status()
             return
 
-        # Anlagen-Status + letzte Meldung aktualisieren
+        # Anlagen-Status + Update-Intervall berechnen
         if tech_nr:
-            self.last_seen[tech_nr] = datetime.now()
+            now = datetime.now()
+            if tech_nr in self.last_seen:
+                secs = (now - self.last_seen[tech_nr]).total_seconds()
+                self.update_interval[tech_nr] = secs / 60
+            self.last_seen[tech_nr] = now
             new_status = "ok" if health == "HEALTH_OK" else "error"
             if self.device_status.get(tech_nr) != new_status:
                 self.device_status[tech_nr] = new_status
