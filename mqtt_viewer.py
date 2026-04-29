@@ -896,9 +896,9 @@ class MQTTViewer(QMainWindow):
         self.anlagen_tab.anlagen_updated.connect(self._on_anlagen_updated)
         if self.anlagen_tab.anlagen:
             self._on_anlagen_updated(self.anlagen_tab.anlagen)
-        self.tabs.addTab(self.einstellungen_tab, "Einstellungen")
         self.tabs.addTab(self.meldungen_tab,     "Meldungen")
         self.tabs.addTab(self.anlagen_tab,       "Anlagen")
+        self.tabs.addTab(self.einstellungen_tab, "Einstellungen")
         main_layout.addWidget(self.tabs, stretch=1)
 
         self.statusBar().showMessage("Nicht verbunden")
