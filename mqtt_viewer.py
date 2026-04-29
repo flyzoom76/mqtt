@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """VBZ MQTT Live - Meldungsanzeige + Anlagen-Übersicht mit Excel-Import"""
 
-__version__ = "1.0.51"
+__version__ = "1.0.52"
 
 import sys
 import json
@@ -757,7 +757,7 @@ class MeldungenTab(QWidget):
         if device_type == "offline":
             color = QColor(200, 200, 200)
         elif health in ("HEALTH_OK", ""):
-            color = QColor(255, 255, 200)
+            color = QColor(220, 252, 231)
         elif "WARN" in health or "DEGRADED" in health:
             color = QColor(255, 220, 150)
         else:
@@ -792,6 +792,56 @@ class MeldungenTab(QWidget):
 
 # ---------------------------------------------------------------------------
 
+class EinstellungenTab(QWidget):
+    def __init__(self, settings: Settings, on_autoclose_changed):
+        super().__init__()
+        self.settings = settings
+        self._on_autoclose_changed = on_autoclose_changed
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setAlignment(Qt.AlignTop)
+
+        box = QGroupBox("Automatisch schliessen")
+        box_layout = QVBoxLayout(box)
+
+        self.chk_autoclose = QCheckBox("Programm nach Inaktivität automatisch schliessen")
+        self.chk_autoclose.setChecked(bool(self.settings.value("auto_close_enabled", True)))
+        box_layout.addWidget(self.chk_autoclose)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Inaktivität nach:"))
+        self.spin_minutes = QSpinBox()
+        self.spin_minutes.setRange(1, 120)
+        self.spin_minutes.setValue(int(self.settings.value("auto_close_minutes", 15)))
+        self.spin_minutes.setSuffix(" Minuten")
+        self.spin_minutes.setFixedWidth(130)
+        self.spin_minutes.setEnabled(self.chk_autoclose.isChecked())
+        row.addWidget(self.spin_minutes)
+        row.addStretch()
+        box_layout.addLayout(row)
+
+        self.chk_autoclose.stateChanged.connect(
+            lambda state: self.spin_minutes.setEnabled(state == Qt.Checked)
+        )
+        self.chk_autoclose.stateChanged.connect(self._apply)
+        self.spin_minutes.valueChanged.connect(self._apply)
+
+        layout.addWidget(box)
+        layout.addStretch()
+
+    def _apply(self):
+        enabled = self.chk_autoclose.isChecked()
+        minutes = self.spin_minutes.value()
+        self.settings.setValue("auto_close_enabled", enabled)
+        self.settings.setValue("auto_close_minutes", minutes)
+        self._on_autoclose_changed(enabled, minutes)
+
+
+# ---------------------------------------------------------------------------
+
 class MQTTViewer(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -813,10 +863,13 @@ class MQTTViewer(QMainWindow):
         self._ls_timer.setInterval(60_000)
         self._ls_timer.timeout.connect(lambda: self.anlagen_tab.update_last_seen_col())
         self._ls_timer.start()
+        _ac_enabled = bool(self.settings.value("auto_close_enabled", True))
+        _ac_minutes = int(self.settings.value("auto_close_minutes", 15))
         self._inactivity_timer = QTimer(singleShot=True)
-        self._inactivity_timer.setInterval(15 * 60 * 1000)
+        self._inactivity_timer.setInterval(_ac_minutes * 60 * 1000)
         self._inactivity_timer.timeout.connect(self.close)
-        self._inactivity_timer.start()
+        if _ac_enabled:
+            self._inactivity_timer.start()
         QApplication.instance().installEventFilter(self)
         self._setup_ui()
         self._load_settings()
@@ -835,6 +888,7 @@ class MQTTViewer(QMainWindow):
         main_layout.addWidget(self._make_countdown_bar())
 
         self.tabs = QTabWidget()
+        self.einstellungen_tab = EinstellungenTab(self.settings, self._on_autoclose_changed)
         self.meldungen_tab = MeldungenTab()
         self.meldungen_tab.cleared.connect(self._on_meldungen_cleared)
         self.meldungen_tab.filter_changed.connect(self._update_status)
@@ -842,8 +896,9 @@ class MQTTViewer(QMainWindow):
         self.anlagen_tab.anlagen_updated.connect(self._on_anlagen_updated)
         if self.anlagen_tab.anlagen:
             self._on_anlagen_updated(self.anlagen_tab.anlagen)
-        self.tabs.addTab(self.meldungen_tab, "Meldungen")
-        self.tabs.addTab(self.anlagen_tab,   "Anlagen")
+        self.tabs.addTab(self.einstellungen_tab, "Einstellungen")
+        self.tabs.addTab(self.meldungen_tab,     "Meldungen")
+        self.tabs.addTab(self.anlagen_tab,       "Anlagen")
         main_layout.addWidget(self.tabs, stretch=1)
 
         self.statusBar().showMessage("Nicht verbunden")
@@ -872,6 +927,12 @@ class MQTTViewer(QMainWindow):
         self._timer.stop()
         self.lbl_countdown.setText("Nicht verbunden")
         self.lbl_countdown.setStyleSheet("color: #555; background: transparent;")
+
+    def _on_autoclose_changed(self, enabled: bool, minutes: int):
+        self._inactivity_timer.stop()
+        self._inactivity_timer.setInterval(minutes * 60 * 1000)
+        if enabled:
+            self._inactivity_timer.start()
 
     def _on_anlagen_updated(self, anlagen: list):
         self._tech_mvu = {a["tech_nr"]: a["mvu"] for a in anlagen}
